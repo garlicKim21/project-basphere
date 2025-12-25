@@ -1,0 +1,105 @@
+OCI:
+  VM:
+    역할:
+    - Talos Omni 셀프 호스팅
+    - On-premise 컨트롤 플레인을 프로비저닝 하는 역할
+    구현 방법: 단독 VM으로 할지 단일 노드 Kubernetes 클러스터로 할지 결정 필요
+    단독 VM 사용시: 간단히 컨테이너로 Omni 배포 가능(공식 문서 가이드 있음)
+    단일 노드 Kubernetes 클러스터 사용시:
+    - 수동으로 Kubernetes 클러스터 생성 후 Omni 배포
+    - 설정은 까다롭겠지만, OCI의 클라우드 컨트롤러를 제대로 사용하면 완성도가 높음
+    - 자원이 넉넉한 편이라 추가 기능 올리기에 편함
+    추가 기능 고려 내용:
+    - 모니터링 허브
+    - 사용자 포털(Backstage)
+  리전: 싱가포르 1
+  고려 사항: 지리적으로 떨어져있어 응답속도 문제가 있을 수 있음
+  VPN: Site-to-Site으로 연결되어 있어 On-premise와 OCI 간 연결이 유지되어 있는 상태
+On-premise:
+  컨트롤 플레인:
+    역할: On-premise의 사용자 테넌트 자원 프로비저닝 및 관리
+    구현 방법: Omni로 프로비저닝 되는 Kubernetes 클러스터를 배포
+    클러스터 아키텍처:
+      컨트롤 플레인:
+        대수: 3대
+        사양:
+          cpu: 4코어
+          메모리: 8GB
+      LB 전용 노드:
+        Type: Worker Node
+        대수: 6대
+        사양:
+          cpu: 2코어
+          메모리: 4GB
+        토폴로지: 모든 ESXi 호스트에 분산하여 1대씩 배치(데몬셋과 비슷한 느낌)
+        역할: LB 전용 노드로, 테넌트 쿠버네티스 클러스터의 LB 서비스가 생성 되었을 때 이를 직접 구현하는 구현체 역할을 담당
+      Worker Node:
+        Type: Worker Node
+        대수: 3대
+        사양:
+          cpu: 16코어
+          메모리: 32GB
+        역할:
+        - 컨트롤 플레인에서 실제 작업을 수행하는 노드로, 사용자 요청에 따라 테넌트 자원을 생성하고 Kubernetes 클러스터를 생성하고 관리하는 역할을 담당
+        - 모니터링 스택
+        - 로깅 스택
+        - CI/CD 스택
+        - Cluster API 스택
+        - Clossplane 스택
+        - Container Image Registry 스택
+        - Code Repository 스택
+  테넌트 네트워크:
+    배포 방법: Crossplane이 vSphere 인프라를 제어하여 배포
+    테넌트 네트워크 아키텍처:
+      최상단 라우터:
+        모델명: Topton mini pc
+        사양:
+          cpu: 4코어
+          메모리: 8GB
+          Local Storage: 128GB NVMe SSD
+          Network: 2.5Gbps 이더넷 6개(Intel I226-V)
+    테넌트 라우터:
+      형태: VMware vSphere VM
+      사양:
+        cpu: 2코어
+        메모리: 4GB
+        Local Storage: 100GB
+        Network: 인터페이스 3개(WAN, LAN 1, LAN 2)
+        OS: OPNsense 25.7.10-amd64
+      수량: 1대
+      역할: 테넌트 네트워크 라우터로, 테넌트 네트워크의 라우팅을 담당
+    테넌트 네트워크 구성:
+      WAN용 네트워크:
+        주소 할당: DHCP로 IP 주소 자동 할당(WAN)
+        분산 스위치: 내부 VM용 분산 스위치
+        포트그룹: Control Plane VM용 포트그룹
+        VLAN: 2000(변동 가능성 있음)
+        MTU: 1450
+      LAN 1용 네트워크:
+        주소 할당: 10.0.1.0/24(LAN 1)
+        분산 스위치: 내부 VM용 분산 스위치
+        포트그룹: 테넌트 VM용 포트그룹
+        VLAN: 사용자 테넌트 별로 생성되는 로직 필요
+        MTU: 1450
+      LAN 2용 네트워크:
+        주소 할당: 10.0.2.0/24(LAN 2)
+        분산 스위치: 내부 VM용 분산 스위치
+        포트그룹: 테넌트 VM용 포트그룹
+        VLAN: 사용자 테넌트 별로 생성되는 로직 필요
+        MTU: 1450
+  셀프서비스 Kubernetes 클러스터:
+    배포 방법: Cluster API를 통해 배포
+    네트워크 위치: 테넌트 네트워크 LAN 1 또는 LAN 2에 위치
+    IP 할당 방법: DHCP로 IP 주소 자동 할당 또는 IPAM 도입 필요할 수 있음
+    Cluster API가 워크로드 클러스터에 API에 접근하려면:
+    - 테넌트 라우터의 특정 포트를 포트포워딩하여 접근하도록 설정
+    - 워크로드 클러스터의 컨트롤 플레인이 3대인 경우와 1대인 경우에 대해서 추가 설계가 필요
+    - VIP를 만들고 HAProxy를 사용할지, 테넌트 라우터의 WAN IP에 바로 HAProxy를 사용할지 고민 필요
+    워크로드 클러스터의 각 노드 접근성:
+      노드 포트를 사용할때 접근할 수 있도록 설정하려면:
+      - Openstack의 플로팅 IP 개념 도입
+      - 테넌트 라우터인 OPNsense의 VIP와 BINAT 기능 활용하여 구현 가능(기능 테스트는 완료함)
+      - 노드에 대한 ssh 접근
+      - 노드포트 서비스 접근
+      - 컨트롤 플레인의 LB 전용 노드들이 LB 서비스를 생성하고 그 End-Point로 BINAT IP의 노드포트를 향하게 함
+      - 플로팅 IP(가칭)에 대한 접근을 위해 VPN(WireGuard)를 사용하는 것이라고 볼 수 있음
