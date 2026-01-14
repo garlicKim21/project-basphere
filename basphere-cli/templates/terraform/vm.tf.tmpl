@@ -232,6 +232,17 @@ locals {
     runcmd:
       - echo "Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized" > /var/log/basphere-init.log
       - echo "Owner: ${var.owner}" >> /var/log/basphere-init.log
+      - echo "Setting MTU to ${var.mtu}" >> /var/log/basphere-init.log
+      - ip link set dev ens192 mtu ${var.mtu}
+      - |
+        cat > /etc/netplan/99-basphere-mtu.yaml << 'NETPLAN'
+        network:
+          version: 2
+          ethernets:
+            ens192:
+              mtu: ${var.mtu}
+        NETPLAN
+      - netplan apply
     final_message: "Basphere VM is ready after $UPTIME seconds"
   EOF
 }
