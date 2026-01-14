@@ -1,0 +1,57 @@
+# Basphere CLI Configuration
+# 이 파일을 /etc/basphere/config.yaml로 복사하고 환경에 맞게 수정하세요.
+
+# vSphere 환경 설정
+vsphere:
+  server: "vcenter.example.local"        # vCenter 서버 주소
+  datacenter: "DC1"                       # 데이터센터 이름
+  cluster: "Cluster1"                     # 클러스터 이름
+  datastore: "datastore1"                 # 데이터스토어 이름
+  resource_pool: "/DC1/host/Cluster1/Resources"  # 리소스 풀 경로
+  network: "VM Network"                   # VM 네트워크 (포트그룹 이름)
+  folder: "basphere-vms"                  # VM 폴더 (없으면 자동 생성)
+
+# VM 템플릿 설정
+templates:
+  # Ubuntu VM 템플릿 (cloud-init + open-vm-tools 포함)
+  vm: "ubuntu-22.04-cloudimg"
+
+# 네트워크 설정 (Dev Network)
+network:
+  cidr: "10.254.0.0/21"                   # 전체 네트워크 대역
+  gateway: "10.254.0.1"                   # 게이트웨이
+  netmask: "255.255.248.0"                # 서브넷 마스크 (/21)
+  prefix_length: 21                        # CIDR prefix
+  dns:
+    - "8.8.8.8"
+    - "1.1.1.1"
+  # 사용자당 IP 블록 크기 (32 = /27)
+  block_size: 32
+  # 예약된 IP (할당하지 않음)
+  reserved:
+    - "10.254.0.1"   # Gateway
+    - "10.254.0.2"   # Reserved
+    - "10.254.0.3"   # Reserved
+
+# Management 클러스터 설정 (Cluster API용 - Stage 2에서 사용)
+management_cluster:
+  kubeconfig: "/etc/basphere/management-kubeconfig"
+  namespace_prefix: "user-"
+
+# 사용자 기본 할당량
+quotas:
+  default:
+    max_vms: 10                           # 최대 VM 수
+    max_clusters: 3                       # 최대 클러스터 수
+    max_ips: 32                           # 최대 IP 수 (블록 크기와 동일)
+
+# 디렉토리 경로
+paths:
+  data: "/var/lib/basphere"               # 데이터 디렉토리
+  logs: "/var/log/basphere"               # 로그 디렉토리
+  config: "/etc/basphere"                 # 설정 디렉토리
+
+# 로깅 설정
+logging:
+  level: "info"                           # debug, info, warn, error
+  audit_enabled: true                     # 감사 로깅 활성화

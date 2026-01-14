@@ -1,0 +1,401 @@
+#!/bin/bash
+#
+# Basphere 관리자 CLI
+#
+# 사용법: basphere-admin <command> [options]
+#
+# 명령어:
+#   user add <username> --pubkey <file>   사용자 추가
+#   user list                             사용자 목록
+#   user delete <username>                사용자 삭제
+#   user show <username>                  사용자 정보 조회
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../lib/common.sh"
+}
+
+# 내부 스크립트 경로
+INTERNAL_SCRIPTS="/usr/local/lib/basphere/internal"
+if [[ ! -d "$INTERNAL_SCRIPTS" ]]; then
+    INTERNAL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/internal"
+fi
+
+# 버전
+readonly VERSION="0.1.0"
+
+# 사용법 출력
+usage() {
+    cat << EOF
+Basphere 관리자 CLI v${VERSION}
+
+사용법: basphere-admin <command> [options]
+
+명령어:
+  user add <username> --pubkey <file>   사용자 추가
+  user list                             사용자 목록
+  user delete <username>                사용자 삭제
+  user show <username>                  사용자 정보 조회
+
+옵션:
+  -h, --help      도움말 출력
+  -v, --version   버전 출력
+
+예시:
+  basphere-admin user add kimht --pubkey /path/to/id_ed25519.pub
+  basphere-admin user list
+  basphere-admin user show kimht
+  basphere-admin user delete kimht
+EOF
+    exit 0
+}
+
+# 버전 출력
+version() {
+    echo "basphere-admin version $VERSION"
+    exit 0
+}
+
+# ============================================
+# 사용자 관리 함수
+# ============================================
+
+# 사용자 추가
+user_add() {
+    local username=""
+    local pubkey_file=""
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pubkey)
+                pubkey_file="$2"
+                shift 2
+                ;;
+            -*)
+                log_error "알 수 없는 옵션: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$username" ]]; then
+                    username="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # 유효성 검사
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin user add <username> --pubkey <file>"
+        exit 1
+    fi
+
+    if [[ -z "$pubkey_file" ]]; then
+        log_error "공개키 파일이 필요합니다"
+        echo "사용법: basphere-admin user add <username> --pubkey <file>"
+        exit 1
+    fi
+
+    if [[ ! -f "$pubkey_file" ]]; then
+        log_error "공개키 파일을 찾을 수 없습니다: $pubkey_file"
+        exit 1
+    fi
+
+    # 사용자 이름 검증
+    if ! validate_resource_name "$username" 32; then
+        exit 1
+    fi
+
+    # 이미 존재하는지 확인
+    if id "$username" &> /dev/null; then
+        log_error "시스템 사용자가 이미 존재합니다: $username"
+        exit 1
+    fi
+
+    if user_exists "$username"; then
+        log_error "Basphere 사용자가 이미 존재합니다: $username"
+        exit 1
+    fi
+
+    log_info "사용자 생성 중: $username"
+
+    # 1. 시스템 사용자 생성
+    useradd -m -s /bin/bash -G basphere-users "$username"
+    log_success "시스템 사용자 생성 완료"
+
+    # 2. SSH 키 설정
+    local ssh_dir="/home/$username/.ssh"
+    mkdir -p "$ssh_dir"
+    cat "$pubkey_file" > "$ssh_dir/authorized_keys"
+    chmod 700 "$ssh_dir"
+    chmod 600 "$ssh_dir/authorized_keys"
+    chown -R "$username:$username" "$ssh_dir"
+    log_success "SSH 키 설정 완료"
+
+    # 3. Basphere 사용자 디렉토리 생성
+    local user_dir="$BASPHERE_DATA_DIR/users/$username"
+    mkdir -p "$user_dir"
+
+    # 4. 메타데이터 생성
+    local timestamp
+    timestamp=$(get_timestamp)
+
+    cat > "$user_dir/metadata.json" << EOF
+{
+    "username": "$username",
+    "created_at": "$timestamp",
+    "created_by": "$(get_current_user)",
+    "status": "active"
+}
+EOF
+    log_success "메타데이터 생성 완료"
+
+    # 5. Terraform 디렉토리 생성
+    mkdir -p "$BASPHERE_DATA_DIR/terraform/$username"
+
+    # 6. 클러스터 디렉토리 생성
+    mkdir -p "$BASPHERE_DATA_DIR/clusters/$username"
+
+    # 7. IP 블록 할당
+    local block_start
+    if block_start=$("$INTERNAL_SCRIPTS/allocate-block" "$username" 2>/dev/null); then
+        set_user_metadata "$username" "ip_block" "$block_start"
+        log_success "IP 블록 할당 완료: $block_start"
+    else
+        log_warn "IP 블록 할당 실패 (나중에 수동 할당 필요)"
+    fi
+
+    # 8. 권한 설정
+    chown -R basphere:basphere "$user_dir"
+    chmod 755 "$user_dir"
+    chmod 644 "$user_dir/metadata.json"
+
+    chown -R basphere:basphere "$BASPHERE_DATA_DIR/terraform/$username"
+    chmod 777 "$BASPHERE_DATA_DIR/terraform/$username"
+
+    chown -R basphere:basphere "$BASPHERE_DATA_DIR/clusters/$username"
+    chmod 777 "$BASPHERE_DATA_DIR/clusters/$username"
+
+    # 감사 로그
+    audit_log "USER_ADD" "$username" "pubkey_file=$pubkey_file"
+
+    echo ""
+    log_success "사용자 생성 완료: $username"
+    echo ""
+    echo "사용자 정보:"
+    echo "  - 사용자명: $username"
+    echo "  - IP 블록: ${block_start:-할당되지 않음}"
+    echo "  - SSH: ssh $username@<bastion-host>"
+}
+
+# 사용자 목록
+user_list() {
+    local users_dir="$BASPHERE_DATA_DIR/users"
+
+    if [[ ! -d "$users_dir" ]] || [[ -z "$(ls -A "$users_dir" 2>/dev/null)" ]]; then
+        echo "등록된 사용자가 없습니다."
+        exit 0
+    fi
+
+    print_table_header "%-15s %-18s %-12s %-8s %s" "USERNAME" "IP_BLOCK" "VMs" "STATUS" "CREATED"
+
+    for user_dir in "$users_dir"/*/; do
+        [[ ! -d "$user_dir" ]] && continue
+
+        local username
+        username=$(basename "$user_dir")
+
+        local metadata_file="$user_dir/metadata.json"
+
+        if [[ -f "$metadata_file" ]]; then
+            local ip_block created_at status vm_count
+
+            ip_block=$(jq -r '.ip_block // "-"' "$metadata_file")
+            created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
+            status=$(jq -r '.status // "active"' "$metadata_file")
+
+            # VM 개수
+            local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
+            if [[ -d "$tf_dir" ]]; then
+                vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+            else
+                vm_count=0
+            fi
+
+            print_table_row "%-15s %-18s %-12s %-8s %s" "$username" "$ip_block" "$vm_count" "$status" "$created_at"
+        fi
+    done
+}
+
+# 사용자 정보 조회
+user_show() {
+    local username="${1:-}"
+
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin user show <username>"
+        exit 1
+    fi
+
+    if ! user_exists "$username"; then
+        log_error "사용자를 찾을 수 없습니다: $username"
+        exit 1
+    fi
+
+    local user_dir="$BASPHERE_DATA_DIR/users/$username"
+    local metadata_file="$user_dir/metadata.json"
+
+    echo "=== 사용자 정보: $username ==="
+    echo ""
+
+    if [[ -f "$metadata_file" ]]; then
+        echo "기본 정보:"
+        jq -r '. | to_entries[] | "  \(.key): \(.value)"' "$metadata_file"
+    fi
+
+    echo ""
+    echo "리소스 현황:"
+
+    # VM 개수
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
+    local vm_count=0
+    if [[ -d "$tf_dir" ]]; then
+        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+    echo "  VMs: $vm_count"
+
+    # 클러스터 개수
+    local cluster_dir="$BASPHERE_DATA_DIR/clusters/$username"
+    local cluster_count=0
+    if [[ -d "$cluster_dir" ]]; then
+        cluster_count=$(find "$cluster_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+    echo "  Clusters: $cluster_count"
+
+    # IP 사용량
+    echo ""
+    echo "IP 할당 현황:"
+    "$INTERNAL_SCRIPTS/list-user-ips" "$username" 2>/dev/null || echo "  정보 없음"
+}
+
+# 사용자 삭제
+user_delete() {
+    local username="${1:-}"
+
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin user delete <username>"
+        exit 1
+    fi
+
+    if ! user_exists "$username"; then
+        log_error "사용자를 찾을 수 없습니다: $username"
+        exit 1
+    fi
+
+    # 리소스 확인
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
+    local vm_count=0
+    if [[ -d "$tf_dir" ]]; then
+        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    if [[ $vm_count -gt 0 ]]; then
+        log_error "사용자에게 $vm_count개의 VM이 있습니다. 먼저 VM을 삭제하세요."
+        exit 1
+    fi
+
+    # 확인
+    if ! prompt_confirm "정말로 사용자 '$username'을(를) 삭제하시겠습니까?"; then
+        log_info "취소되었습니다"
+        exit 0
+    fi
+
+    log_info "사용자 삭제 중: $username"
+
+    # 1. Basphere 데이터 삭제
+    rm -rf "$BASPHERE_DATA_DIR/users/$username"
+    rm -rf "$BASPHERE_DATA_DIR/terraform/$username"
+    rm -rf "$BASPHERE_DATA_DIR/clusters/$username"
+    log_success "Basphere 데이터 삭제 완료"
+
+    # 2. IP 블록 정보는 유지 (allocations.tsv에서 제거하지 않음 - 재할당 방지)
+    log_info "IP 블록 정보는 유지됩니다 (재할당 방지)"
+
+    # 3. 시스템 사용자 삭제
+    if id "$username" &> /dev/null; then
+        userdel -r "$username" 2>/dev/null || userdel "$username"
+        log_success "시스템 사용자 삭제 완료"
+    fi
+
+    # 감사 로그
+    audit_log "USER_DELETE" "$username" ""
+
+    log_success "사용자 삭제 완료: $username"
+}
+
+# ============================================
+# 메인 함수
+# ============================================
+
+main() {
+    # Root 권한 확인
+    if [[ $EUID -ne 0 ]]; then
+        log_error "이 명령은 root 권한이 필요합니다"
+        log_info "사용법: sudo basphere-admin <command>"
+        exit 1
+    fi
+
+    # 인자 없으면 도움말
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    local command="${1:-}"
+    shift
+
+    case "$command" in
+        -h|--help)
+            usage
+            ;;
+        -v|--version)
+            version
+            ;;
+        user)
+            local subcommand="${1:-}"
+            shift || true
+
+            case "$subcommand" in
+                add)
+                    user_add "$@"
+                    ;;
+                list)
+                    user_list "$@"
+                    ;;
+                show)
+                    user_show "$@"
+                    ;;
+                delete)
+                    user_delete "$@"
+                    ;;
+                *)
+                    log_error "알 수 없는 user 명령: $subcommand"
+                    echo "사용 가능한 명령: add, list, show, delete"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        *)
+            log_error "알 수 없는 명령: $command"
+            usage
+            ;;
+    esac
+}
+
+main "$@"

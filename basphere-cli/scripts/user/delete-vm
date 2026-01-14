@@ -1,0 +1,200 @@
+#!/bin/bash
+#
+# VM 삭제 스크립트 (사용자용)
+#
+# 사용법: delete-vm <vm-name>
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 내부 스크립트 경로
+INTERNAL_SCRIPTS="/usr/local/lib/basphere/internal"
+if [[ ! -d "$INTERNAL_SCRIPTS" ]]; then
+    INTERNAL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../internal"
+fi
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+VM 삭제
+
+사용법: delete-vm <vm-name> [옵션]
+
+인자:
+  vm-name       삭제할 VM 이름
+
+옵션:
+  -f, --force   확인 없이 삭제
+  -h, --help    도움말
+
+예시:
+  delete-vm my-server
+  delete-vm my-server -f
+EOF
+    exit 0
+}
+
+# VM 삭제 실행
+delete_single_vm() {
+    local vm_name="$1"
+    local user="$2"
+
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$user/$vm_name"
+    local metadata_file="$tf_dir/metadata.json"
+
+    # VM 존재 확인
+    if [[ ! -d "$tf_dir" ]]; then
+        log_error "VM을 찾을 수 없습니다: $vm_name"
+        return 1
+    fi
+
+    # IP 주소 가져오기 (정리용)
+    local ip_address=""
+    if [[ -f "$metadata_file" ]]; then
+        ip_address=$(jq -r '.ip_address // ""' "$metadata_file")
+    fi
+
+    log_info "VM 삭제 중: $vm_name"
+
+    # 상태 업데이트
+    if [[ -f "$metadata_file" ]]; then
+        jq '.status = "deleting"' "$metadata_file" > "$metadata_file.tmp" && \
+            mv "$metadata_file.tmp" "$metadata_file"
+    fi
+
+    # vSphere 인증 정보 로드
+    load_vsphere_env 2>/dev/null || true
+
+    # Terraform destroy 실행
+    local destroy_success=true
+
+    if [[ -f "$tf_dir/main.tf" ]]; then
+        (
+            cd "$tf_dir"
+
+            # terraform destroy
+            if ! terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
+                log_warn "Terraform destroy 실패 (로그: $tf_dir/terraform-destroy.log)"
+                exit 1
+            fi
+        )
+
+        if [[ $? -ne 0 ]]; then
+            destroy_success=false
+            log_warn "vSphere에서 VM 삭제 실패. 로컬 데이터만 정리합니다."
+        fi
+    fi
+
+    # IP 반환
+    if [[ -n "$ip_address" ]]; then
+        if "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null; then
+            log_success "IP 반환 완료: $ip_address"
+        else
+            log_warn "IP 반환 실패: $ip_address"
+        fi
+    fi
+
+    # Terraform 디렉토리 삭제
+    rm -rf "$tf_dir"
+
+    # 감사 로그
+    audit_log "DELETE_VM" "$vm_name" "user=$user,ip=$ip_address"
+
+    if [[ "$destroy_success" == "true" ]]; then
+        log_success "VM 삭제 완료: $vm_name"
+    else
+        log_warn "VM 삭제 완료 (경고 있음): $vm_name"
+    fi
+
+    return 0
+}
+
+# 메인 함수
+main() {
+    local vm_name=""
+    local force=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--force)
+                force=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            -*)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+            *)
+                if [[ -z "$vm_name" ]]; then
+                    vm_name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # VM 이름 필수
+    if [[ -z "$vm_name" ]]; then
+        log_error "VM 이름이 필요합니다"
+        echo "사용법: delete-vm <vm-name>"
+        exit 1
+    fi
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    # VM 존재 확인
+    if ! vm_name_exists "$CURRENT_USER" "$vm_name"; then
+        log_error "VM을 찾을 수 없습니다: $vm_name"
+        exit 1
+    fi
+
+    # VM 정보 표시
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$CURRENT_USER/$vm_name"
+    local metadata_file="$tf_dir/metadata.json"
+
+    if [[ -f "$metadata_file" ]]; then
+        echo ""
+        echo "삭제할 VM 정보:"
+        echo "  - 이름: $vm_name"
+        echo "  - IP: $(jq -r '.ip_address // "-"' "$metadata_file")"
+        echo "  - 스펙: $(jq -r '.spec // "-"' "$metadata_file")"
+        echo "  - 상태: $(jq -r '.status // "-"' "$metadata_file")"
+        echo ""
+    fi
+
+    # 확인
+    if [[ "$force" != "true" ]]; then
+        if ! prompt_confirm "정말로 VM '$vm_name'을(를) 삭제하시겠습니까?"; then
+            log_info "취소되었습니다"
+            exit 0
+        fi
+    fi
+
+    echo ""
+
+    # VM 삭제
+    if delete_single_vm "$vm_name" "$CURRENT_USER"; then
+        exit 0
+    else
+        exit 1
+    fi
+}
+
+main "$@"

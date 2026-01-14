@@ -1,0 +1,314 @@
+# Basphere VM Terraform Configuration
+# 자동 생성됨 - 직접 수정하지 마세요
+#
+# VM: ${VM_NAME}
+# User: ${USER}
+# Created: ${TIMESTAMP}
+
+terraform {
+  required_version = ">= 1.0.0"
+
+  required_providers {
+    vsphere = {
+      source  = "hashicorp/vsphere"
+      version = "~> 2.0"
+    }
+  }
+}
+
+# vSphere Provider 설정
+# 인증 정보는 환경변수로 주입됨 (VSPHERE_USER, VSPHERE_PASSWORD)
+provider "vsphere" {
+  vsphere_server       = var.vsphere_server
+  allow_unverified_ssl = var.vsphere_allow_unverified_ssl
+}
+
+# ============================================
+# Variables
+# ============================================
+
+variable "vsphere_server" {
+  description = "vCenter server address"
+  type        = string
+  default     = "${VSPHERE_SERVER}"
+}
+
+variable "vsphere_allow_unverified_ssl" {
+  description = "Allow unverified SSL certificates"
+  type        = bool
+  default     = ${VSPHERE_ALLOW_UNVERIFIED_SSL}
+}
+
+variable "datacenter" {
+  description = "vSphere datacenter name"
+  type        = string
+  default     = "${DATACENTER}"
+}
+
+variable "cluster" {
+  description = "vSphere cluster name"
+  type        = string
+  default     = "${CLUSTER}"
+}
+
+variable "datastore" {
+  description = "vSphere datastore name"
+  type        = string
+  default     = "${DATASTORE}"
+}
+
+variable "network" {
+  description = "vSphere network (port group) name"
+  type        = string
+  default     = "${NETWORK}"
+}
+
+variable "resource_pool" {
+  description = "vSphere resource pool path"
+  type        = string
+  default     = "${RESOURCE_POOL}"
+}
+
+variable "template" {
+  description = "VM template name"
+  type        = string
+  default     = "${TEMPLATE}"
+}
+
+variable "folder" {
+  description = "VM folder path"
+  type        = string
+  default     = "${VM_FOLDER}"
+}
+
+variable "vm_name" {
+  description = "VM name"
+  type        = string
+  default     = "${VM_NAME}"
+}
+
+variable "num_cpus" {
+  description = "Number of CPUs"
+  type        = number
+  default     = ${NUM_CPUS}
+}
+
+variable "memory" {
+  description = "Memory in MB"
+  type        = number
+  default     = ${MEMORY_MB}
+}
+
+variable "disk_size" {
+  description = "Disk size in GB"
+  type        = number
+  default     = ${DISK_GB}
+}
+
+variable "ip_address" {
+  description = "Static IP address"
+  type        = string
+  default     = "${IP_ADDRESS}"
+}
+
+variable "netmask" {
+  description = "Network mask"
+  type        = string
+  default     = "${NETMASK}"
+}
+
+variable "gateway" {
+  description = "Default gateway"
+  type        = string
+  default     = "${GATEWAY}"
+}
+
+variable "dns_servers" {
+  description = "DNS servers"
+  type        = list(string)
+  default     = [${DNS_SERVERS}]
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key for default user"
+  type        = string
+  default     = "${SSH_PUBLIC_KEY}"
+}
+
+variable "owner" {
+  description = "VM owner (basphere user)"
+  type        = string
+  default     = "${USER}"
+}
+
+# ============================================
+# Data Sources
+# ============================================
+
+data "vsphere_datacenter" "dc" {
+  name = var.datacenter
+}
+
+data "vsphere_compute_cluster" "cluster" {
+  name          = var.cluster
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_datastore" "datastore" {
+  name          = var.datastore
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_network" "network" {
+  name          = var.network
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_virtual_machine" "template" {
+  name          = var.template
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+# ============================================
+# cloud-init configuration
+# ============================================
+
+locals {
+  # cloud-init metadata (network configuration)
+  metadata = yamlencode({
+    "local-hostname" = var.vm_name
+    "instance-id"    = var.vm_name
+  })
+
+  # cloud-init network configuration (v2)
+  network_config = yamlencode({
+    version = 2
+    ethernets = {
+      ens192 = {
+        dhcp4 = false
+        addresses = [
+          "${var.ip_address}/${NETWORK_PREFIX}"
+        ]
+        gateway4 = var.gateway
+        nameservers = {
+          addresses = var.dns_servers
+        }
+      }
+    }
+  })
+
+  # cloud-init userdata
+  userdata = <<-EOF
+    #cloud-config
+    hostname: ${var.vm_name}
+    manage_etc_hosts: true
+    users:
+      - name: ubuntu
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        shell: /bin/bash
+        ssh_authorized_keys:
+          - ${var.ssh_public_key}
+    package_update: false
+    package_upgrade: false
+    runcmd:
+      - echo "Basphere VM ${var.vm_name} initialized" > /var/log/basphere-init.log
+    final_message: "Basphere VM is ready after $UPTIME seconds"
+  EOF
+}
+
+# ============================================
+# VM Resource
+# ============================================
+
+resource "vsphere_virtual_machine" "vm" {
+  name             = var.vm_name
+  resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
+  datastore_id     = data.vsphere_datastore.datastore.id
+  folder           = var.folder
+
+  num_cpus = var.num_cpus
+  memory   = var.memory
+
+  guest_id = data.vsphere_virtual_machine.template.guest_id
+  firmware = data.vsphere_virtual_machine.template.firmware
+
+  scsi_type = data.vsphere_virtual_machine.template.scsi_type
+
+  network_interface {
+    network_id   = data.vsphere_network.network.id
+    adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+  }
+
+  disk {
+    label            = "disk0"
+    size             = var.disk_size
+    thin_provisioned = true
+    eagerly_scrub    = false
+  }
+
+  # vApp properties 전달을 위한 CDROM 장치
+  cdrom {
+    client_device = true
+  }
+
+  clone {
+    template_uuid = data.vsphere_virtual_machine.template.id
+
+    customize {
+      linux_options {
+        host_name = var.vm_name
+        domain    = "local"
+      }
+
+      network_interface {
+        ipv4_address = var.ip_address
+        ipv4_netmask = ${NETWORK_PREFIX}
+      }
+
+      ipv4_gateway    = var.gateway
+      dns_server_list = var.dns_servers
+    }
+  }
+
+  # cloud-init via vApp properties (VMware guestinfo)
+  extra_config = {
+    "guestinfo.metadata"          = base64encode(local.metadata)
+    "guestinfo.metadata.encoding" = "base64"
+    "guestinfo.userdata"          = base64encode(local.userdata)
+    "guestinfo.userdata.encoding" = "base64"
+  }
+
+  # Custom attributes (태그)
+  tags = []
+
+  lifecycle {
+    ignore_changes = [
+      clone[0].customize[0].linux_options[0].host_name,
+      extra_config["guestinfo.userdata"],
+    ]
+  }
+}
+
+# ============================================
+# Outputs
+# ============================================
+
+output "vm_name" {
+  description = "VM name"
+  value       = vsphere_virtual_machine.vm.name
+}
+
+output "vm_id" {
+  description = "VM ID"
+  value       = vsphere_virtual_machine.vm.id
+}
+
+output "ip_address" {
+  description = "VM IP address"
+  value       = var.ip_address
+}
+
+output "owner" {
+  description = "VM owner"
+  value       = var.owner
+}

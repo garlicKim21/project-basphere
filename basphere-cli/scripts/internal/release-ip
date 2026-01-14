@@ -1,0 +1,87 @@
+#!/bin/bash
+#
+# IP 반환 스크립트
+# 할당된 IP를 반환합니다.
+#
+# 사용법: release-ip <ip-address> [username]
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/ipam-common.sh"
+
+# 사용법 출력
+usage() {
+    echo "사용법: release-ip <ip-address> [username]"
+    echo ""
+    echo "인자:"
+    echo "  ip-address  반환할 IP 주소"
+    echo "  username    사용자 이름 (생략 시 IP 소유자 확인 안함)"
+    exit 1
+}
+
+# 메인 함수
+main() {
+    local ip="${1:-}"
+    local user="${2:-}"
+
+    if [[ -z "$ip" ]]; then
+        usage
+    fi
+
+    # IP 형식 검증
+    if ! validate_ip "$ip"; then
+        log_error "유효하지 않은 IP 주소입니다: $ip"
+        exit 1
+    fi
+
+    # 락 획득
+    if ! acquire_lock "$IPAM_LOCK"; then
+        log_error "IPAM 락 획득 실패"
+        exit 1
+    fi
+    trap 'release_lock' EXIT
+
+    # 해당 IP가 할당되어 있는지 확인
+    if [[ ! -f "$LEASES_FILE" ]]; then
+        log_error "IP가 할당되어 있지 않습니다: $ip"
+        exit 1
+    fi
+
+    local lease_info
+    lease_info=$( (grep -v '^#' "$LEASES_FILE" 2>/dev/null || true) | awk -F'\t' -v i="$ip" '$1 == i {print $0}')
+
+    if [[ -z "$lease_info" ]]; then
+        log_error "IP가 할당되어 있지 않습니다: $ip"
+        exit 1
+    fi
+
+    # 사용자 확인 (지정된 경우)
+    if [[ -n "$user" ]]; then
+        local ip_owner
+        ip_owner=$(echo "$lease_info" | cut -f2)
+        if [[ "$ip_owner" != "$user" ]]; then
+            log_error "IP '$ip'는 사용자 '$user'의 소유가 아닙니다 (소유자: $ip_owner)"
+            exit 1
+        fi
+    fi
+
+    # 리소스 이름 추출 (로깅용)
+    local resource_name
+    resource_name=$(echo "$lease_info" | cut -f3)
+
+    # IP 반환 (leases.tsv에서 제거)
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    grep -v "^${ip}	" "$LEASES_FILE" > "$tmp_file" || true
+    mv "$tmp_file" "$LEASES_FILE"
+
+    # 감사 로그
+    audit_log "RELEASE_IP" "$resource_name" "ip=$ip,user=${user:-unknown}"
+
+    log_success "IP 반환 완료: $ip (리소스: $resource_name)"
+}
+
+main "$@"

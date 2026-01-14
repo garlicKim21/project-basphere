@@ -1,0 +1,399 @@
+#!/bin/bash
+#
+# VM 생성 스크립트 (사용자용)
+#
+# 사용법: create-vm
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 내부 스크립트 경로
+INTERNAL_SCRIPTS="/usr/local/lib/basphere/internal"
+if [[ ! -d "$INTERNAL_SCRIPTS" ]]; then
+    INTERNAL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../internal"
+fi
+
+# 템플릿 경로
+TEMPLATE_DIR="/var/lib/basphere/templates/terraform"
+if [[ ! -d "$TEMPLATE_DIR" ]]; then
+    TEMPLATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../templates/terraform"
+fi
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+VM 생성
+
+사용법: create-vm [옵션]
+
+옵션:
+  -n, --name <name>     VM 이름 (대화형 입력 가능)
+  -s, --spec <spec>     스펙 (small, medium, large)
+  -c, --count <count>   생성할 VM 수 (기본값: 1)
+  -h, --help            도움말
+
+예시:
+  create-vm                          # 대화형 모드
+  create-vm -n my-server -s medium   # 명령행 모드
+  create-vm -n web -s small -c 3     # 3대 생성
+EOF
+    exit 0
+}
+
+# VM 스펙 목록 가져오기
+get_vm_specs() {
+    local specs_file="/etc/basphere/specs.yaml"
+
+    if [[ ! -f "$specs_file" ]]; then
+        echo "small medium large"
+        return
+    fi
+
+    yq eval '.vm_specs | keys | .[]' "$specs_file" 2>/dev/null | tr '\n' ' '
+}
+
+# 스펙 상세 정보 가져오기
+get_spec_details() {
+    local spec="$1"
+    local cpu memory disk description
+
+    cpu=$(get_spec ".vm_specs.$spec.cpu" "2")
+    memory=$(get_spec ".vm_specs.$spec.memory_mb" "4096")
+    disk=$(get_spec ".vm_specs.$spec.disk_gb" "50")
+    description=$(get_spec ".vm_specs.$spec.description" "")
+
+    local memory_gb=$((memory / 1024))
+    echo "$cpu vCPU, ${memory_gb}GB RAM, ${disk}GB Disk"
+}
+
+# 사용자 SSH 공개키 가져오기
+get_user_ssh_key() {
+    local user="$1"
+    local ssh_key_file="/home/$user/.ssh/authorized_keys"
+
+    if [[ -f "$ssh_key_file" ]]; then
+        head -1 "$ssh_key_file"
+    else
+        log_warn "SSH 공개키를 찾을 수 없습니다"
+        echo ""
+    fi
+}
+
+# Terraform 파일 생성
+generate_terraform_file() {
+    local vm_name="$1"
+    local spec="$2"
+    local ip_address="$3"
+    local user="$4"
+    local output_dir="$5"
+
+    local template_file="$TEMPLATE_DIR/vm.tf.tmpl"
+
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Terraform 템플릿을 찾을 수 없습니다: $template_file"
+        return 1
+    fi
+
+    # 설정 값 로드
+    local vsphere_server datacenter cluster datastore network resource_pool vm_folder template
+    vsphere_server=$(get_config '.vsphere.server' 'vcenter.example.local')
+    datacenter=$(get_config '.vsphere.datacenter' 'DC1')
+    cluster=$(get_config '.vsphere.cluster' 'Cluster1')
+    datastore=$(get_config '.vsphere.datastore' 'datastore1')
+    network=$(get_config '.vsphere.network' 'VM Network')
+    resource_pool=$(get_config '.vsphere.resource_pool' '/DC1/host/Cluster1/Resources')
+    vm_folder=$(get_config '.vsphere.folder' 'basphere-vms')
+    template=$(get_config '.templates.vm' 'ubuntu-22.04-cloudimg')
+
+    # 네트워크 설정
+    local gateway netmask dns_servers network_prefix
+    gateway=$(get_config '.network.gateway' '10.254.0.1')
+    netmask=$(get_config '.network.netmask' '255.255.248.0')
+    network_prefix=$(get_config '.network.prefix_length' '21')
+
+    # DNS 서버 (JSON 배열 형식으로 변환)
+    dns_servers=$(get_config '.network.dns[]' '8.8.8.8' | while read -r dns; do echo "\"$dns\""; done | paste -sd ',' -)
+
+    # 스펙 정보
+    local num_cpus memory_mb disk_gb
+    num_cpus=$(get_spec ".vm_specs.$spec.cpu" "2")
+    memory_mb=$(get_spec ".vm_specs.$spec.memory_mb" "4096")
+    disk_gb=$(get_spec ".vm_specs.$spec.disk_gb" "50")
+
+    # SSH 키
+    local ssh_public_key
+    ssh_public_key=$(get_user_ssh_key "$user")
+
+    # 타임스탬프
+    local timestamp
+    timestamp=$(get_timestamp)
+
+    # 변수 치환
+    sed -e "s|\${VM_NAME}|$vm_name|g" \
+        -e "s|\${USER}|$user|g" \
+        -e "s|\${TIMESTAMP}|$timestamp|g" \
+        -e "s|\${VSPHERE_SERVER}|$vsphere_server|g" \
+        -e "s|\${VSPHERE_ALLOW_UNVERIFIED_SSL}|true|g" \
+        -e "s|\${DATACENTER}|$datacenter|g" \
+        -e "s|\${CLUSTER}|$cluster|g" \
+        -e "s|\${DATASTORE}|$datastore|g" \
+        -e "s|\${NETWORK}|$network|g" \
+        -e "s|\${RESOURCE_POOL}|$resource_pool|g" \
+        -e "s|\${VM_FOLDER}|$vm_folder|g" \
+        -e "s|\${TEMPLATE}|$template|g" \
+        -e "s|\${NUM_CPUS}|$num_cpus|g" \
+        -e "s|\${MEMORY_MB}|$memory_mb|g" \
+        -e "s|\${DISK_GB}|$disk_gb|g" \
+        -e "s|\${IP_ADDRESS}|$ip_address|g" \
+        -e "s|\${NETMASK}|$netmask|g" \
+        -e "s|\${GATEWAY}|$gateway|g" \
+        -e "s|\${DNS_SERVERS}|$dns_servers|g" \
+        -e "s|\${NETWORK_PREFIX}|$network_prefix|g" \
+        -e "s|\${SSH_PUBLIC_KEY}|$ssh_public_key|g" \
+        "$template_file" > "$output_dir/main.tf"
+}
+
+# VM 생성 실행
+create_single_vm() {
+    local vm_name="$1"
+    local spec="$2"
+    local user="$3"
+
+    log_info "VM 생성 준비 중: $vm_name"
+
+    # Terraform 디렉토리
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$user/$vm_name"
+
+    # 이미 존재하는지 확인
+    if [[ -d "$tf_dir" ]]; then
+        log_error "VM이 이미 존재합니다: $vm_name"
+        return 1
+    fi
+
+    # IP 할당
+    local ip_address
+    if ! ip_address=$("$INTERNAL_SCRIPTS/allocate-ip" "$user" "$vm_name" "vm" 2>/dev/null); then
+        log_error "IP 할당 실패"
+        return 1
+    fi
+
+    log_success "IP 할당: $ip_address"
+
+    # Terraform 디렉토리 생성
+    mkdir -p "$tf_dir"
+
+    # Terraform 파일 생성
+    if ! generate_terraform_file "$vm_name" "$spec" "$ip_address" "$user" "$tf_dir"; then
+        # 실패 시 IP 반환
+        "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
+        rm -rf "$tf_dir"
+        return 1
+    fi
+
+    # 메타데이터 생성
+    cat > "$tf_dir/metadata.json" << EOF
+{
+    "name": "$vm_name",
+    "owner": "$user",
+    "spec": "$spec",
+    "ip_address": "$ip_address",
+    "created_at": "$(get_timestamp)",
+    "status": "creating"
+}
+EOF
+
+    # vSphere 인증 정보 로드
+    if ! load_vsphere_env; then
+        "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
+        rm -rf "$tf_dir"
+        return 1
+    fi
+
+    # Terraform 실행
+    log_info "VM 생성 중... (몇 분 소요될 수 있습니다)"
+
+    (
+        cd "$tf_dir"
+
+        # terraform init
+        if ! terraform init -no-color > terraform-init.log 2>&1; then
+            log_error "Terraform init 실패 (로그: $tf_dir/terraform-init.log)"
+            exit 1
+        fi
+
+        # terraform apply
+        if ! terraform apply -auto-approve -no-color > terraform-apply.log 2>&1; then
+            log_error "Terraform apply 실패 (로그: $tf_dir/terraform-apply.log)"
+            exit 1
+        fi
+    )
+
+    if [[ $? -ne 0 ]]; then
+        # 실패 시 정리
+        jq '.status = "failed"' "$tf_dir/metadata.json" > "$tf_dir/metadata.json.tmp" && \
+            mv "$tf_dir/metadata.json.tmp" "$tf_dir/metadata.json"
+        return 1
+    fi
+
+    # 성공 - 메타데이터 업데이트
+    jq '.status = "running"' "$tf_dir/metadata.json" > "$tf_dir/metadata.json.tmp" && \
+        mv "$tf_dir/metadata.json.tmp" "$tf_dir/metadata.json"
+
+    # 감사 로그
+    audit_log "CREATE_VM" "$vm_name" "user=$user,spec=$spec,ip=$ip_address"
+
+    log_success "VM 생성 완료: $vm_name ($ip_address)"
+    return 0
+}
+
+# 메인 함수
+main() {
+    local vm_name=""
+    local spec=""
+    local count=1
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name)
+                vm_name="$2"
+                shift 2
+                ;;
+            -s|--spec)
+                spec="$2"
+                shift 2
+                ;;
+            -c|--count)
+                count="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        log_info "관리자에게 계정 생성을 요청하세요"
+        exit 1
+    fi
+
+    echo ""
+    echo "=== VM 생성 ==="
+    echo ""
+
+    # 대화형 입력 (값이 없는 경우)
+    if [[ -z "$vm_name" ]]; then
+        vm_name=$(prompt_input "VM 이름")
+
+        if ! validate_resource_name "$vm_name"; then
+            exit 1
+        fi
+    fi
+
+    # 이름 중복 확인
+    if vm_name_exists "$CURRENT_USER" "$vm_name"; then
+        log_error "이미 존재하는 VM 이름입니다: $vm_name"
+        exit 1
+    fi
+
+    # 스펙 선택
+    if [[ -z "$spec" ]]; then
+        echo ""
+        local specs_list
+        specs_list=$(get_vm_specs)
+        local specs_array=($specs_list)
+
+        local options=()
+        for s in "${specs_array[@]}"; do
+            local details
+            details=$(get_spec_details "$s")
+            options+=("$s - $details")
+        done
+
+        local selection
+        selection=$(prompt_select "스펙 선택" "${options[@]}")
+        spec="${specs_array[$selection]}"
+    fi
+
+    # 대수 입력
+    if [[ $count -eq 1 ]]; then
+        echo ""
+        count=$(prompt_number "생성할 VM 대수" 1 1 10)
+    fi
+
+    # Quota 확인
+    local max_vms current_vms
+    max_vms=$(get_config '.quotas.default.max_vms' '10')
+    current_vms=0
+    if [[ -d "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" ]]; then
+        current_vms=$(find "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    if [[ $((current_vms + count)) -gt $max_vms ]]; then
+        log_error "VM 할당량을 초과합니다 (현재: $current_vms, 요청: $count, 최대: $max_vms)"
+        exit 1
+    fi
+
+    # 확인
+    echo ""
+    echo "생성할 VM 정보:"
+    echo "  - 이름: $vm_name"
+    echo "  - 스펙: $spec ($(get_spec_details "$spec"))"
+    echo "  - 대수: $count"
+    echo ""
+
+    if ! prompt_confirm "VM을 생성하시겠습니까?" "y"; then
+        log_info "취소되었습니다"
+        exit 0
+    fi
+
+    echo ""
+
+    # VM 생성
+    local created=0
+    local failed=0
+
+    for ((i=1; i<=count; i++)); do
+        local current_vm_name
+        if [[ $count -eq 1 ]]; then
+            current_vm_name="$vm_name"
+        else
+            current_vm_name="${vm_name}-${i}"
+        fi
+
+        if create_single_vm "$current_vm_name" "$spec" "$CURRENT_USER"; then
+            ((created++)) || true
+        else
+            ((failed++)) || true
+        fi
+    done
+
+    echo ""
+    echo "=========================================="
+    echo "생성 완료: $created / $count"
+    if [[ $failed -gt 0 ]]; then
+        echo "실패: $failed"
+    fi
+    echo "=========================================="
+    echo ""
+    echo "VM 접속: ssh ubuntu@<IP_ADDRESS>"
+    echo "VM 목록: list-vms"
+}
+
+main "$@"

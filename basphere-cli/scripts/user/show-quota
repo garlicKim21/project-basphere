@@ -1,0 +1,169 @@
+#!/bin/bash
+#
+# 할당량 조회 스크립트 (사용자용)
+#
+# 사용법: show-quota
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+할당량 조회
+
+사용법: show-quota [옵션]
+
+옵션:
+  -j, --json      JSON 형식 출력
+  -h, --help      도움말
+EOF
+    exit 0
+}
+
+# 프로그레스 바 생성
+progress_bar() {
+    local current="$1"
+    local max="$2"
+    local width=30
+
+    local percent=$((current * 100 / max))
+    local filled=$((current * width / max))
+    local empty=$((width - filled))
+
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    # 색상 결정
+    local color="$GREEN"
+    if [[ $percent -ge 80 ]]; then
+        color="$RED"
+    elif [[ $percent -ge 60 ]]; then
+        color="$YELLOW"
+    fi
+
+    printf "[${color}%s${NC}] %d/%d (%d%%)" "$bar" "$current" "$max" "$percent"
+}
+
+# 메인 함수
+main() {
+    local json_output=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -j|--json)
+                json_output=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    # 할당량 로드
+    local max_vms max_clusters max_ips
+    max_vms=$(get_config '.quotas.default.max_vms' '10')
+    max_clusters=$(get_config '.quotas.default.max_clusters' '3')
+    max_ips=$(get_config '.quotas.default.max_ips' '32')
+
+    # 현재 사용량 계산
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$CURRENT_USER"
+    local cluster_dir="$BASPHERE_DATA_DIR/clusters/$CURRENT_USER"
+
+    local current_vms=0
+    local current_clusters=0
+    local current_ips=0
+
+    # VM 개수
+    if [[ -d "$tf_dir" ]]; then
+        current_vms=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # 클러스터 개수
+    if [[ -d "$cluster_dir" ]]; then
+        current_clusters=$(find "$cluster_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # IP 사용량
+    local leases_file="$BASPHERE_DATA_DIR/ipam/leases.tsv"
+    if [[ -f "$leases_file" ]]; then
+        current_ips=$( (grep -v '^#' "$leases_file" 2>/dev/null || true) | awk -F'\t' -v u="$CURRENT_USER" '$2 == u {count++} END {print count+0}')
+    fi
+
+    # IP 블록 정보
+    local ip_block
+    ip_block=$(get_user_metadata "$CURRENT_USER" "ip_block")
+
+    # JSON 출력
+    if [[ "$json_output" == "true" ]]; then
+        cat << EOF
+{
+    "user": "$CURRENT_USER",
+    "ip_block": "$ip_block",
+    "quotas": {
+        "vms": { "current": $current_vms, "max": $max_vms },
+        "clusters": { "current": $current_clusters, "max": $max_clusters },
+        "ips": { "current": $current_ips, "max": $max_ips }
+    }
+}
+EOF
+        exit 0
+    fi
+
+    # 테이블 출력
+    echo ""
+    echo "=== 할당량 ($CURRENT_USER) ==="
+    echo ""
+
+    # IP 블록 정보
+    if [[ -n "$ip_block" ]]; then
+        echo "IP 블록: $ip_block (${max_ips}개)"
+    else
+        echo "IP 블록: 할당되지 않음"
+    fi
+
+    echo ""
+    echo "리소스 사용량:"
+    echo ""
+
+    # VMs
+    printf "  VMs:       "
+    progress_bar "$current_vms" "$max_vms"
+    echo ""
+
+    # Clusters
+    printf "  Clusters:  "
+    progress_bar "$current_clusters" "$max_clusters"
+    echo ""
+
+    # IPs
+    printf "  IPs:       "
+    progress_bar "$current_ips" "$max_ips"
+    echo ""
+
+    echo ""
+}
+
+main "$@"

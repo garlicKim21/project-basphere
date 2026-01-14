@@ -1,0 +1,45 @@
+# VM 및 클러스터 스펙 정의
+# 이 파일을 /etc/basphere/specs.yaml로 복사하고 필요시 수정하세요.
+
+# VM 스펙 정의
+vm_specs:
+  small:
+    description: "개발/테스트용 소형 VM"
+    cpu: 2
+    memory_mb: 4096                       # 4GB
+    disk_gb: 50
+  medium:
+    description: "일반 워크로드용 중형 VM"
+    cpu: 4
+    memory_mb: 8192                       # 8GB
+    disk_gb: 100
+  large:
+    description: "고성능 워크로드용 대형 VM"
+    cpu: 8
+    memory_mb: 16384                      # 16GB
+    disk_gb: 200
+
+# Kubernetes 클러스터 스펙 정의 (Stage 2에서 사용)
+cluster_specs:
+  dev:
+    description: "개발용 클러스터 (경량)"
+    control_plane:
+      count: 1
+      spec: "medium"
+    worker:
+      count: 2
+      spec: "medium"
+  standard:
+    description: "표준 운영 클러스터 (HA)"
+    control_plane:
+      count: 3
+      spec: "medium"
+    worker:
+      count: 3
+      spec: "large"
+
+# 기본값
+defaults:
+  vm_spec: "medium"                       # 기본 VM 스펙
+  cluster_spec: "dev"                     # 기본 클러스터 스펙
+  vm_username: "ubuntu"                   # VM 기본 사용자

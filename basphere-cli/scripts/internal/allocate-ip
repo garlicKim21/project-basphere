@@ -1,0 +1,95 @@
+#!/bin/bash
+#
+# 개별 IP 할당 스크립트
+# 사용자의 블록 내에서 개별 IP를 할당합니다.
+#
+# 사용법: allocate-ip <username> <resource-name> [resource-type]
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/ipam-common.sh"
+
+# 사용법 출력
+usage() {
+    echo "사용법: allocate-ip <username> <resource-name> [resource-type]"
+    echo ""
+    echo "인자:"
+    echo "  username       사용자 이름"
+    echo "  resource-name  리소스 이름 (예: my-vm-1)"
+    echo "  resource-type  리소스 타입 (기본값: vm)"
+    exit 1
+}
+
+# 메인 함수
+main() {
+    local user="${1:-}"
+    local resource_name="${2:-}"
+    local resource_type="${3:-vm}"
+
+    if [[ -z "$user" || -z "$resource_name" ]]; then
+        usage
+    fi
+
+    # 네트워크 설정 로드
+    load_network_config
+
+    # 락 획득
+    if ! acquire_lock "$IPAM_LOCK"; then
+        log_error "IPAM 락 획득 실패"
+        exit 1
+    fi
+    trap 'release_lock' EXIT
+
+    # 사용자 블록 확인
+    local block_start
+    if ! block_start=$(get_user_block "$user"); then
+        log_error "사용자 '$user'에게 할당된 블록이 없습니다"
+        log_info "먼저 allocate-block $user 를 실행하세요"
+        exit 1
+    fi
+
+    # 이미 같은 이름의 리소스에 IP가 할당되어 있는지 확인
+    if [[ -f "$LEASES_FILE" ]]; then
+        local existing_ip
+        existing_ip=$(grep -v '^#' "$LEASES_FILE" | awk -F'\t' -v u="$user" -v r="$resource_name" '$2 == u && $3 == r {print $1}' || true)
+        if [[ -n "$existing_ip" ]]; then
+            log_warn "리소스 '$resource_name'에 이미 IP가 할당되어 있습니다: $existing_ip"
+            echo "$existing_ip"
+            exit 0
+        fi
+    fi
+
+    # IP 사용량 확인 (quota)
+    local max_ips
+    max_ips=$(get_config '.quotas.default.max_ips' "$NETWORK_BLOCK_SIZE")
+    local current_usage
+    current_usage=$(get_user_ip_usage "$user")
+
+    if [[ $current_usage -ge $max_ips ]]; then
+        log_error "IP 할당량을 초과했습니다 (사용: $current_usage, 최대: $max_ips)"
+        exit 1
+    fi
+
+    # 다음 사용 가능한 IP 찾기
+    local allocated_ip
+    if ! allocated_ip=$(find_next_available_ip "$user" "$block_start"); then
+        log_error "블록 내에 사용 가능한 IP가 없습니다"
+        exit 1
+    fi
+
+    # IP 할당 기록
+    local timestamp
+    timestamp=$(get_timestamp)
+
+    echo -e "${allocated_ip}\t${user}\t${resource_name}\t${resource_type}\t${timestamp}" >> "$LEASES_FILE"
+
+    # 감사 로그
+    audit_log "ALLOCATE_IP" "$resource_name" "user=$user,ip=$allocated_ip,type=$resource_type"
+
+    log_success "IP 할당 완료: $resource_name -> $allocated_ip"
+    echo "$allocated_ip"
+}
+
+main "$@"

@@ -1,0 +1,163 @@
+#!/bin/bash
+#
+# 리소스 목록 조회 스크립트 (사용자용)
+# VM과 클러스터 모두 표시
+#
+# 사용법: list-resources
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+리소스 목록 조회
+
+사용법: list-resources [옵션]
+
+옵션:
+  -j, --json      JSON 형식 출력
+  -h, --help      도움말
+EOF
+    exit 0
+}
+
+# 메인 함수
+main() {
+    local json_output=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -j|--json)
+                json_output=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$CURRENT_USER"
+    local cluster_dir="$BASPHERE_DATA_DIR/clusters/$CURRENT_USER"
+
+    # JSON 출력
+    if [[ "$json_output" == "true" ]]; then
+        local result="{\"vms\":[], \"clusters\":[]}"
+
+        # VMs
+        if [[ -d "$tf_dir" ]]; then
+            for vm_dir in "$tf_dir"/*/; do
+                [[ ! -d "$vm_dir" ]] && continue
+                local metadata_file="$vm_dir/metadata.json"
+                if [[ -f "$metadata_file" ]]; then
+                    result=$(echo "$result" | jq --argjson vm "$(cat "$metadata_file")" '.vms += [$vm]')
+                fi
+            done
+        fi
+
+        # Clusters
+        if [[ -d "$cluster_dir" ]]; then
+            for c_dir in "$cluster_dir"/*/; do
+                [[ ! -d "$c_dir" ]] && continue
+                local metadata_file="$c_dir/metadata.json"
+                if [[ -f "$metadata_file" ]]; then
+                    result=$(echo "$result" | jq --argjson cluster "$(cat "$metadata_file")" '.clusters += [$cluster]')
+                fi
+            done
+        fi
+
+        echo "$result" | jq '.'
+        exit 0
+    fi
+
+    # 테이블 출력
+    echo ""
+    echo "=== 리소스 목록 ($CURRENT_USER) ==="
+
+    # VMs
+    echo ""
+    echo "--- VMs ---"
+
+    local vm_count=0
+    if [[ -d "$tf_dir" ]] && [[ -n "$(ls -A "$tf_dir" 2>/dev/null)" ]]; then
+        print_table_header "%-20s %-16s %-10s %-10s" "NAME" "IP" "SPEC" "STATUS"
+
+        for vm_dir in "$tf_dir"/*/; do
+            [[ ! -d "$vm_dir" ]] && continue
+
+            local vm_name
+            vm_name=$(basename "$vm_dir")
+            local metadata_file="$vm_dir/metadata.json"
+
+            if [[ -f "$metadata_file" ]]; then
+                local ip_address spec status
+                ip_address=$(jq -r '.ip_address // "-"' "$metadata_file")
+                spec=$(jq -r '.spec // "-"' "$metadata_file")
+                status=$(jq -r '.status // "unknown"' "$metadata_file")
+
+                printf "%-20s %-16s %-10s %-10s\n" "$vm_name" "$ip_address" "$spec" "$status"
+                ((vm_count++)) || true
+            fi
+        done
+    else
+        echo "생성된 VM이 없습니다."
+    fi
+
+    # Clusters (Stage 2에서 구현)
+    echo ""
+    echo "--- Kubernetes Clusters ---"
+
+    local cluster_count=0
+    if [[ -d "$cluster_dir" ]] && [[ -n "$(ls -A "$cluster_dir" 2>/dev/null)" ]]; then
+        print_table_header "%-20s %-10s %-10s %-10s" "NAME" "TYPE" "NODES" "STATUS"
+
+        for c_dir in "$cluster_dir"/*/; do
+            [[ ! -d "$c_dir" ]] && continue
+
+            local cluster_name
+            cluster_name=$(basename "$c_dir")
+            local metadata_file="$c_dir/metadata.json"
+
+            if [[ -f "$metadata_file" ]]; then
+                local cluster_type node_count status
+                cluster_type=$(jq -r '.type // "-"' "$metadata_file")
+                node_count=$(jq -r '.node_count // "-"' "$metadata_file")
+                status=$(jq -r '.status // "unknown"' "$metadata_file")
+
+                printf "%-20s %-10s %-10s %-10s\n" "$cluster_name" "$cluster_type" "$node_count" "$status"
+                ((cluster_count++)) || true
+            fi
+        done
+    else
+        echo "생성된 클러스터가 없습니다."
+        echo "(클러스터 생성은 Stage 2에서 지원됩니다)"
+    fi
+
+    # 요약
+    echo ""
+    echo "=========================================="
+    echo "총 리소스: VM ${vm_count}개, 클러스터 ${cluster_count}개"
+}
+
+main "$@"
