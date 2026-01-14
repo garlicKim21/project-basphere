@@ -148,6 +148,12 @@ variable "owner" {
   default     = "${USER}"
 }
 
+variable "mtu" {
+  description = "Network MTU size"
+  type        = number
+  default     = ${MTU}
+}
+
 # ============================================
 # Data Sources
 # ============================================
@@ -197,6 +203,7 @@ locals {
     ethernets = {
       ens192 = {
         dhcp4 = false
+        mtu   = var.mtu
         addresses = [
           "${var.ip_address}/${NETWORK_PREFIX}"
         ]

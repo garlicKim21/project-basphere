@@ -115,10 +115,11 @@ generate_terraform_file() {
     template=$(get_config '.templates.vm' 'ubuntu-22.04-cloudimg')
 
     # 네트워크 설정
-    local gateway netmask dns_servers network_prefix
+    local gateway netmask dns_servers network_prefix mtu
     gateway=$(get_config '.network.gateway' '10.254.0.1')
     netmask=$(get_config '.network.netmask' '255.255.248.0')
     network_prefix=$(get_config '.network.prefix_length' '21')
+    mtu=$(get_config '.network.mtu' '1500')
 
     # DNS 서버 (JSON 배열 형식으로 변환)
     dns_servers=$(get_config '.network.dns[]' '8.8.8.8' | while read -r dns; do echo "\"$dns\""; done | paste -sd ',' -)
@@ -162,6 +163,7 @@ generate_terraform_file() {
         -e "s|\${GATEWAY}|$gateway|g" \
         -e "s|\${DNS_SERVERS}|$dns_servers|g" \
         -e "s|\${NETWORK_PREFIX}|$network_prefix|g" \
+        -e "s|\${MTU}|$mtu|g" \
         -e "s|\${SSH_PUBLIC_KEY}|$ssh_public_key|g" \
         "$template_file" > "$output_dir/main.tf"
 }

@@ -22,6 +22,7 @@ network:
   gateway: "10.254.0.1"                   # 게이트웨이
   netmask: "255.255.248.0"                # 서브넷 마스크 (/21)
   prefix_length: 21                        # CIDR prefix
+  mtu: 1500                                # MTU 크기 (오버레이 네트워크는 1450)
   dns:
     - "8.8.8.8"
     - "1.1.1.1"
