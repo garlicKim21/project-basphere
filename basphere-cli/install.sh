@@ -41,74 +41,111 @@ check_root() {
     fi
 }
 
-# 필수 패키지 확인
+# yq 설치 (바이너리 - snap 버전은 /etc 접근 불가)
+install_yq() {
+    log_info "yq 설치 중..."
+
+    # snap 버전이 있으면 제거 (샌드박스로 /etc 접근 불가)
+    if command -v snap &> /dev/null && snap list yq &> /dev/null; then
+        log_warn "snap yq 제거 중 (샌드박스 제한으로 /etc 접근 불가)"
+        snap remove yq || true
+    fi
+
+    # 바이너리 다운로드
+    local yq_url="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+    if wget -qO /usr/local/bin/yq "$yq_url"; then
+        chmod +x /usr/local/bin/yq
+        log_success "yq 설치 완료"
+    else
+        log_error "yq 다운로드 실패"
+        return 1
+    fi
+}
+
+# Terraform 설치
+install_terraform() {
+    log_info "Terraform 설치 중..."
+
+    if [[ -f /etc/debian_version ]]; then
+        # HashiCorp GPG 키 추가
+        wget -O- https://apt.releases.hashicorp.com/gpg 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+        # apt 저장소 추가
+        echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
+
+        # 설치
+        apt-get update
+        apt-get install -y terraform
+
+    elif [[ -f /etc/redhat-release ]]; then
+        # HashiCorp 저장소 추가
+        yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo || \
+        dnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+
+        # 설치
+        yum install -y terraform || dnf install -y terraform
+    else
+        log_error "지원하지 않는 OS입니다. Terraform을 수동으로 설치하세요."
+        log_info "https://developer.hashicorp.com/terraform/downloads 참조"
+        return 1
+    fi
+
+    log_success "Terraform 설치 완료"
+}
+
+# 필수 패키지 확인 및 설치
 check_dependencies() {
     log_info "필수 패키지 확인 중..."
 
-    local missing=()
+    # OS 감지 및 기본 패키지 설치
+    if [[ -f /etc/debian_version ]]; then
+        apt-get update -qq
 
-    # jq - JSON 파싱
-    if ! command -v jq &> /dev/null; then
-        missing+=("jq")
+        # git, curl, jq 설치 (없으면)
+        for pkg in git curl jq; do
+            if ! command -v "$pkg" &> /dev/null; then
+                log_info "$pkg 설치 중..."
+                apt-get install -y "$pkg"
+            fi
+        done
+
+    elif [[ -f /etc/redhat-release ]]; then
+        # git, curl, jq 설치 (없으면)
+        for pkg in git curl jq; do
+            if ! command -v "$pkg" &> /dev/null; then
+                log_info "$pkg 설치 중..."
+                yum install -y "$pkg" || dnf install -y "$pkg"
+            fi
+        done
     fi
 
-    # yq - YAML 파싱
-    if ! command -v yq &> /dev/null; then
-        missing+=("yq")
+    # yq 확인 및 설치
+    local yq_path
+    yq_path=$(which yq 2>/dev/null || true)
+
+    if [[ -z "$yq_path" ]]; then
+        install_yq
+    elif [[ "$yq_path" == "/snap/bin/yq" ]]; then
+        # snap 버전은 /etc 접근 불가 - 재설치 필요
+        log_warn "snap yq 감지됨 - 바이너리 버전으로 재설치합니다"
+        install_yq
     fi
 
-    # terraform
+    # Terraform 확인 및 설치
     if ! command -v terraform &> /dev/null; then
-        missing+=("terraform")
+        install_terraform
     fi
+
+    # 최종 확인
+    local missing=()
+    command -v jq &> /dev/null || missing+=("jq")
+    command -v yq &> /dev/null || missing+=("yq")
+    command -v terraform &> /dev/null || missing+=("terraform")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        log_warn "다음 패키지가 설치되어 있지 않습니다: ${missing[*]}"
-        log_info "설치를 진행합니다..."
-
-        # OS 감지
-        if [[ -f /etc/debian_version ]]; then
-            apt-get update
-
-            for pkg in "${missing[@]}"; do
-                case $pkg in
-                    jq)
-                        apt-get install -y jq
-                        ;;
-                    yq)
-                        # yq는 snap 또는 직접 다운로드
-                        if command -v snap &> /dev/null; then
-                            snap install yq
-                        else
-                            wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-                            chmod +x /usr/local/bin/yq
-                        fi
-                        ;;
-                    terraform)
-                        log_warn "Terraform은 수동 설치가 필요합니다."
-                        log_info "https://developer.hashicorp.com/terraform/downloads 참조"
-                        ;;
-                esac
-            done
-        elif [[ -f /etc/redhat-release ]]; then
-            for pkg in "${missing[@]}"; do
-                case $pkg in
-                    jq)
-                        yum install -y jq || dnf install -y jq
-                        ;;
-                    yq)
-                        wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-                        chmod +x /usr/local/bin/yq
-                        ;;
-                    terraform)
-                        log_warn "Terraform은 수동 설치가 필요합니다."
-                        log_info "https://developer.hashicorp.com/terraform/downloads 참조"
-                        ;;
-                esac
-            done
-        else
-            log_error "지원하지 않는 OS입니다. 패키지를 수동으로 설치하세요."
-        fi
+        log_error "다음 패키지 설치에 실패했습니다: ${missing[*]}"
+        log_error "수동으로 설치 후 다시 실행하세요."
+        exit 1
     fi
 
     log_success "필수 패키지 확인 완료"
