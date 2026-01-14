@@ -138,7 +138,7 @@ create_vsphere_user_folder() {
 
     if [[ $? -ne 0 ]]; then
         log_warn "vSphere 폴더 생성 실패. 첫 번째 VM 생성 시 수동으로 만들어야 합니다."
-        log_warn "디버깅을 위해 폴더 유지: $folder_dir"
+        log_warn "로그 확인: $folder_dir/terraform-apply.log"
         return 1
     fi
 

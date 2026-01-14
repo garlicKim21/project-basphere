@@ -48,9 +48,10 @@ IDP(포털) 구축 전 단계에서 개발자가 Bastion 서버에 SSH 접속하
 sudo apt update
 sudo apt install -y jq git curl
 
-# yq 설치
+# yq 설치 (반드시 바이너리로 설치 - snap 버전은 /etc 접근 불가)
 sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
 sudo chmod +x /usr/local/bin/yq
+# 주의: snap install yq 사용 금지 (샌드박스로 인해 /etc/basphere 접근 불가)
 
 # Terraform 설치 (1.0+)
 wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
@@ -361,6 +362,23 @@ cat /var/log/basphere/audit.log
 
 # Terraform 로그 (VM별)
 cat /var/lib/basphere/terraform/<username>/<vm-name>/terraform-apply.log
+```
+
+### yq 설정 읽기 실패
+
+`get_config` 함수가 기본값만 반환하는 경우:
+
+```bash
+# yq가 snap으로 설치되었는지 확인
+which yq
+# /snap/bin/yq 로 나오면 snap 버전
+
+# snap 버전은 /etc 디렉토리 접근 불가 (샌드박스 제한)
+# 해결: snap 제거 후 바이너리로 재설치
+sudo snap remove yq
+sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+sudo chmod +x /usr/local/bin/yq
+hash -r  # 셸 캐시 초기화
 ```
 
 ---
