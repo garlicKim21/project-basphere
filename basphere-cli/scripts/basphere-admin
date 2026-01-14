@@ -60,6 +60,122 @@ version() {
     exit 0
 }
 
+# 템플릿 경로
+TEMPLATE_DIR="/var/lib/basphere/templates/terraform"
+if [[ ! -d "$TEMPLATE_DIR" ]]; then
+    TEMPLATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../templates/terraform"
+fi
+
+# ============================================
+# vSphere 폴더 관리 함수
+# ============================================
+
+# vSphere 사용자 폴더 생성
+create_vsphere_user_folder() {
+    local username="$1"
+    local folder_dir="$BASPHERE_DATA_DIR/terraform/$username/_folder"
+
+    log_info "vSphere 사용자 폴더 생성 중..."
+
+    # 템플릿 파일 확인
+    local template_file="$TEMPLATE_DIR/user-folder.tf.tmpl"
+    if [[ ! -f "$template_file" ]]; then
+        log_warn "vSphere 폴더 템플릿을 찾을 수 없습니다: $template_file"
+        log_warn "vSphere 폴더는 첫 번째 VM 생성 시 수동으로 만들어야 합니다."
+        return 1
+    fi
+
+    # 디렉토리 생성
+    mkdir -p "$folder_dir"
+
+    # 설정 값 로드
+    local vsphere_server datacenter vm_folder
+    vsphere_server=$(get_config '.vsphere.server' 'vcenter.example.local')
+    datacenter=$(get_config '.vsphere.datacenter' 'DC1')
+    vm_folder=$(get_config '.vsphere.folder' 'basphere-vms')
+
+    # 타임스탬프
+    local timestamp
+    timestamp=$(get_timestamp)
+
+    # 변수 치환
+    sed -e "s|\${USER}|$username|g" \
+        -e "s|\${TIMESTAMP}|$timestamp|g" \
+        -e "s|\${VSPHERE_SERVER}|$vsphere_server|g" \
+        -e "s|\${VSPHERE_ALLOW_UNVERIFIED_SSL}|true|g" \
+        -e "s|\${DATACENTER}|$datacenter|g" \
+        -e "s|\${VM_FOLDER}|$vm_folder|g" \
+        "$template_file" > "$folder_dir/main.tf"
+
+    # vSphere 인증 정보 로드
+    if ! load_vsphere_env; then
+        log_warn "vSphere 인증 정보 로드 실패"
+        rm -rf "$folder_dir"
+        return 1
+    fi
+
+    # Terraform 실행
+    (
+        cd "$folder_dir"
+
+        # terraform init
+        if ! terraform init -no-color > terraform-init.log 2>&1; then
+            log_warn "Terraform init 실패 (로그: $folder_dir/terraform-init.log)"
+            exit 1
+        fi
+
+        # terraform apply
+        if ! terraform apply -auto-approve -no-color > terraform-apply.log 2>&1; then
+            log_warn "Terraform apply 실패 (로그: $folder_dir/terraform-apply.log)"
+            exit 1
+        fi
+    )
+
+    if [[ $? -ne 0 ]]; then
+        log_warn "vSphere 폴더 생성 실패. 첫 번째 VM 생성 시 수동으로 만들어야 합니다."
+        rm -rf "$folder_dir"
+        return 1
+    fi
+
+    log_success "vSphere 사용자 폴더 생성 완료"
+    return 0
+}
+
+# vSphere 사용자 폴더 삭제
+delete_vsphere_user_folder() {
+    local username="$1"
+    local folder_dir="$BASPHERE_DATA_DIR/terraform/$username/_folder"
+
+    if [[ ! -d "$folder_dir" ]] || [[ ! -f "$folder_dir/main.tf" ]]; then
+        log_info "vSphere 폴더 정보가 없습니다 (수동 삭제 필요할 수 있음)"
+        return 0
+    fi
+
+    log_info "vSphere 사용자 폴더 삭제 중..."
+
+    # vSphere 인증 정보 로드
+    load_vsphere_env 2>/dev/null || true
+
+    # Terraform destroy
+    (
+        cd "$folder_dir"
+
+        if ! terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
+            log_warn "vSphere 폴더 삭제 실패 (로그: $folder_dir/terraform-destroy.log)"
+            exit 1
+        fi
+    )
+
+    if [[ $? -ne 0 ]]; then
+        log_warn "vSphere 폴더 삭제 실패"
+        return 1
+    fi
+
+    rm -rf "$folder_dir"
+    log_success "vSphere 사용자 폴더 삭제 완료"
+    return 0
+}
+
 # ============================================
 # 사용자 관리 함수
 # ============================================
@@ -171,7 +287,15 @@ EOF
         log_warn "IP 블록 할당 실패 (나중에 수동 할당 필요)"
     fi
 
-    # 8. 권한 설정
+    # 8. vSphere 사용자 폴더 생성
+    local folder_path=""
+    if create_vsphere_user_folder "$username"; then
+        folder_path=$(get_config '.vsphere.folder' 'basphere-vms')
+        folder_path="${folder_path}/${username}"
+        set_user_metadata "$username" "vsphere_folder" "$folder_path"
+    fi
+
+    # 9. 권한 설정
     chown -R basphere:basphere "$user_dir"
     chmod 755 "$user_dir"
     chmod 644 "$user_dir/metadata.json"
@@ -220,10 +344,10 @@ user_list() {
             created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
             status=$(jq -r '.status // "active"' "$metadata_file")
 
-            # VM 개수
+            # VM 개수 (_folder 디렉토리 제외)
             local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
             if [[ -d "$tf_dir" ]]; then
-                vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+                vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
             else
                 vm_count=0
             fi
@@ -262,11 +386,11 @@ user_show() {
     echo ""
     echo "리소스 현황:"
 
-    # VM 개수
+    # VM 개수 (_folder 디렉토리 제외)
     local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
     local vm_count=0
     if [[ -d "$tf_dir" ]]; then
-        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
     fi
     echo "  VMs: $vm_count"
 
@@ -299,11 +423,11 @@ user_delete() {
         exit 1
     fi
 
-    # 리소스 확인
+    # 리소스 확인 (_folder 디렉토리 제외)
     local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
     local vm_count=0
     if [[ -d "$tf_dir" ]]; then
-        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        vm_count=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
     fi
 
     if [[ $vm_count -gt 0 ]]; then
@@ -319,16 +443,19 @@ user_delete() {
 
     log_info "사용자 삭제 중: $username"
 
-    # 1. Basphere 데이터 삭제
+    # 1. vSphere 사용자 폴더 삭제
+    delete_vsphere_user_folder "$username"
+
+    # 2. Basphere 데이터 삭제
     rm -rf "$BASPHERE_DATA_DIR/users/$username"
     rm -rf "$BASPHERE_DATA_DIR/terraform/$username"
     rm -rf "$BASPHERE_DATA_DIR/clusters/$username"
     log_success "Basphere 데이터 삭제 완료"
 
-    # 2. IP 블록 정보는 유지 (allocations.tsv에서 제거하지 않음 - 재할당 방지)
+    # 3. IP 블록 정보는 유지 (allocations.tsv에서 제거하지 않음 - 재할당 방지)
     log_info "IP 블록 정보는 유지됩니다 (재할당 방지)"
 
-    # 3. 시스템 사용자 삭제
+    # 4. 시스템 사용자 삭제
     if id "$username" &> /dev/null; then
         userdel -r "$username" 2>/dev/null || userdel "$username"
         log_success "시스템 사용자 삭제 완료"

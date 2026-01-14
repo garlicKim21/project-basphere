@@ -1,0 +1,95 @@
+# Basphere User Folder Terraform Configuration
+# 자동 생성됨 - 직접 수정하지 마세요
+#
+# User: ${USER}
+# Created: ${TIMESTAMP}
+
+terraform {
+  required_version = ">= 1.0.0"
+
+  required_providers {
+    vsphere = {
+      source  = "hashicorp/vsphere"
+      version = "~> 2.0"
+    }
+  }
+}
+
+# vSphere Provider 설정
+# 인증 정보는 환경변수로 주입됨 (VSPHERE_USER, VSPHERE_PASSWORD)
+provider "vsphere" {
+  vsphere_server       = var.vsphere_server
+  allow_unverified_ssl = var.vsphere_allow_unverified_ssl
+}
+
+# ============================================
+# Variables
+# ============================================
+
+variable "vsphere_server" {
+  description = "vCenter server address"
+  type        = string
+  default     = "${VSPHERE_SERVER}"
+}
+
+variable "vsphere_allow_unverified_ssl" {
+  description = "Allow unverified SSL certificates"
+  type        = bool
+  default     = ${VSPHERE_ALLOW_UNVERIFIED_SSL}
+}
+
+variable "datacenter" {
+  description = "vSphere datacenter name"
+  type        = string
+  default     = "${DATACENTER}"
+}
+
+variable "base_folder" {
+  description = "Base VM folder path"
+  type        = string
+  default     = "${VM_FOLDER}"
+}
+
+variable "owner" {
+  description = "Folder owner (basphere user)"
+  type        = string
+  default     = "${USER}"
+}
+
+# ============================================
+# Data Sources
+# ============================================
+
+data "vsphere_datacenter" "dc" {
+  name = var.datacenter
+}
+
+# ============================================
+# User Folder Resource
+# ============================================
+
+# 사용자별 폴더 생성 (basphere-vms/username)
+resource "vsphere_folder" "user_folder" {
+  path          = "${var.base_folder}/${var.owner}"
+  type          = "vm"
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+# ============================================
+# Outputs
+# ============================================
+
+output "folder_path" {
+  description = "User folder path"
+  value       = vsphere_folder.user_folder.path
+}
+
+output "folder_id" {
+  description = "User folder ID"
+  value       = vsphere_folder.user_folder.id
+}
+
+output "owner" {
+  description = "Folder owner"
+  value       = var.owner
+}

@@ -84,6 +84,8 @@ main() {
 
         for vm_dir in "$tf_dir"/*/; do
             [[ ! -d "$vm_dir" ]] && continue
+            # _folder 디렉토리 건너뛰기
+            [[ "$(basename "$vm_dir")" == "_folder" ]] && continue
 
             local metadata_file="$vm_dir/metadata.json"
             if [[ -f "$metadata_file" ]]; then
@@ -116,6 +118,8 @@ main() {
 
     for vm_dir in "$tf_dir"/*/; do
         [[ ! -d "$vm_dir" ]] && continue
+        # _folder 디렉토리 건너뛰기
+        [[ "$(basename "$vm_dir")" == "_folder" ]] && continue
 
         local vm_name
         vm_name=$(basename "$vm_dir")

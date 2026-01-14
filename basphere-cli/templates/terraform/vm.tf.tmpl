@@ -2,6 +2,7 @@
 # 자동 생성됨 - 직접 수정하지 마세요
 #
 # VM: ${VM_NAME}
+# vSphere VM Name: ${VSPHERE_VM_NAME}
 # User: ${USER}
 # Created: ${TIMESTAMP}
 
@@ -75,16 +76,22 @@ variable "template" {
   default     = "${TEMPLATE}"
 }
 
-variable "folder" {
-  description = "VM folder path"
+variable "base_folder" {
+  description = "Base VM folder path"
   type        = string
   default     = "${VM_FOLDER}"
 }
 
 variable "vm_name" {
-  description = "VM name"
+  description = "VM name (short, for display and hostname)"
   type        = string
   default     = "${VM_NAME}"
+}
+
+variable "vsphere_vm_name" {
+  description = "vSphere VM name (with user prefix, globally unique)"
+  type        = string
+  default     = "${VSPHERE_VM_NAME}"
 }
 
 variable "num_cpus" {
@@ -174,10 +181,14 @@ data "vsphere_virtual_machine" "template" {
 # ============================================
 
 locals {
+  # VM이 생성될 폴더 경로 (폴더는 사용자 생성 시 이미 만들어짐)
+  vm_folder_path = "${var.base_folder}/${var.owner}"
+
   # cloud-init metadata (network configuration)
+  # hostname은 짧은 이름 사용 (프리픽스 없이)
   metadata = yamlencode({
     "local-hostname" = var.vm_name
-    "instance-id"    = var.vm_name
+    "instance-id"    = var.vsphere_vm_name
   })
 
   # cloud-init network configuration (v2)
@@ -198,6 +209,7 @@ locals {
   })
 
   # cloud-init userdata
+  # hostname은 짧은 이름 사용
   userdata = <<-EOF
     #cloud-config
     hostname: ${var.vm_name}
@@ -211,7 +223,8 @@ locals {
     package_update: false
     package_upgrade: false
     runcmd:
-      - echo "Basphere VM ${var.vm_name} initialized" > /var/log/basphere-init.log
+      - echo "Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized" > /var/log/basphere-init.log
+      - echo "Owner: ${var.owner}" >> /var/log/basphere-init.log
     final_message: "Basphere VM is ready after $UPTIME seconds"
   EOF
 }
@@ -221,10 +234,13 @@ locals {
 # ============================================
 
 resource "vsphere_virtual_machine" "vm" {
-  name             = var.vm_name
+  # vSphere에서 보이는 이름 (사용자 프리픽스 포함)
+  name             = var.vsphere_vm_name
   resource_pool_id = data.vsphere_compute_cluster.cluster.resource_pool_id
   datastore_id     = data.vsphere_datastore.datastore.id
-  folder           = var.folder
+
+  # 사용자별 폴더에 생성
+  folder           = local.vm_folder_path
 
   num_cpus = var.num_cpus
   memory   = var.memory
@@ -256,6 +272,7 @@ resource "vsphere_virtual_machine" "vm" {
 
     customize {
       linux_options {
+        # hostname은 짧은 이름 사용
         host_name = var.vm_name
         domain    = "local"
       }
@@ -287,6 +304,7 @@ resource "vsphere_virtual_machine" "vm" {
       extra_config["guestinfo.userdata"],
     ]
   }
+
 }
 
 # ============================================
@@ -294,7 +312,12 @@ resource "vsphere_virtual_machine" "vm" {
 # ============================================
 
 output "vm_name" {
-  description = "VM name"
+  description = "VM name (short)"
+  value       = var.vm_name
+}
+
+output "vsphere_vm_name" {
+  description = "vSphere VM name (with prefix)"
   value       = vsphere_virtual_machine.vm.name
 }
 
@@ -311,4 +334,9 @@ output "ip_address" {
 output "owner" {
   description = "VM owner"
   value       = var.owner
+}
+
+output "folder" {
+  description = "VM folder path"
+  value       = local.vm_folder_path
 }

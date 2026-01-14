@@ -90,6 +90,9 @@ create-vm -n web-server -s medium -c 3
 > - 영문 소문자, 숫자, 하이픈(-) 사용 가능
 > - 연속된 하이픈(--) 불가
 > - 최대 63자
+>
+> **참고**: vSphere에서는 사용자 이름이 자동으로 VM 이름 앞에 붙습니다.
+> 예: `my-server` → vSphere에서 `kimht-my-server`로 표시
 
 ### 여러 VM 생성 시
 
@@ -99,10 +102,10 @@ create-vm -n web-server -s medium -c 3
 create-vm -n web -s small -c 3
 ```
 
-결과:
-- `web-1` (10.254.0.32)
-- `web-2` (10.254.0.33)
-- `web-3` (10.254.0.34)
+결과 (사용자가 kimht인 경우):
+- CLI: `web-1`, `web-2`, `web-3`
+- vSphere: `kimht-web-1`, `kimht-web-2`, `kimht-web-3`
+- IP: 10.254.0.32, 10.254.0.33, 10.254.0.34
 
 ---
 
@@ -314,6 +317,12 @@ ssh 10.254.0.32
 
 - 각 사용자에게 독립된 IP 블록이 할당됨
 - VM은 할당된 블록 내의 IP를 자동으로 받음
+
+### vSphere 구조
+
+- 각 사용자의 VM은 vSphere에서 별도 폴더에 저장됨 (`basphere-vms/<username>/`)
+- VM 이름에는 사용자 이름이 자동으로 붙음 (CLI에서는 짧은 이름 사용)
+- 이를 통해 vCenter에서 사용자별 리소스 구분 가능
 
 ---
 

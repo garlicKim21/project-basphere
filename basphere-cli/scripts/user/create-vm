@@ -137,8 +137,12 @@ generate_terraform_file() {
     local timestamp
     timestamp=$(get_timestamp)
 
+    # vSphere VM 이름 (사용자 프리픽스 포함 - vSphere에서 고유해야 함)
+    local vsphere_vm_name="${user}-${vm_name}"
+
     # 변수 치환
     sed -e "s|\${VM_NAME}|$vm_name|g" \
+        -e "s|\${VSPHERE_VM_NAME}|$vsphere_vm_name|g" \
         -e "s|\${USER}|$user|g" \
         -e "s|\${TIMESTAMP}|$timestamp|g" \
         -e "s|\${VSPHERE_SERVER}|$vsphere_server|g" \
@@ -199,10 +203,14 @@ create_single_vm() {
         return 1
     fi
 
+    # vSphere VM 이름 (사용자 프리픽스 포함)
+    local vsphere_vm_name="${user}-${vm_name}"
+
     # 메타데이터 생성
     cat > "$tf_dir/metadata.json" << EOF
 {
     "name": "$vm_name",
+    "vsphere_vm_name": "$vsphere_vm_name",
     "owner": "$user",
     "spec": "$spec",
     "ip_address": "$ip_address",
@@ -337,12 +345,12 @@ main() {
         count=$(prompt_number "생성할 VM 대수" 1 1 10)
     fi
 
-    # Quota 확인
+    # Quota 확인 (_folder 디렉토리 제외)
     local max_vms current_vms
     max_vms=$(get_config '.quotas.default.max_vms' '10')
     current_vms=0
     if [[ -d "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" ]]; then
-        current_vms=$(find "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        current_vms=$(find "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
     fi
 
     if [[ $((current_vms + count)) -gt $max_vms ]]; then

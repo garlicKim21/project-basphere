@@ -255,7 +255,8 @@ basphere-cli/
 │       └── show-quota
 └── templates/
     └── terraform/
-        └── vm.tf.tmpl            # Terraform VM 템플릿
+        ├── vm.tf.tmpl            # Terraform VM 템플릿
+        └── user-folder.tf.tmpl   # 사용자 폴더 템플릿
 ```
 
 ### 설치 후 디렉토리
@@ -275,6 +276,9 @@ basphere-cli/
 │       └── metadata.json
 ├── terraform/                    # Terraform 상태
 │   └── <username>/
+│       ├── _folder/              # vSphere 사용자 폴더 Terraform
+│       │   ├── main.tf
+│       │   └── terraform.tfstate
 │       └── <vm-name>/
 │           ├── main.tf
 │           ├── metadata.json
@@ -282,7 +286,8 @@ basphere-cli/
 ├── clusters/                     # 클러스터 데이터 (Stage 2)
 └── templates/                    # 템플릿 파일
     └── terraform/
-        └── vm.tf.tmpl
+        ├── vm.tf.tmpl
+        └── user-folder.tf.tmpl
 
 /var/log/basphere/                # 로그
 └── audit.log                     # 감사 로그
@@ -373,6 +378,40 @@ IP 블록 할당 예시:
 | user1 | 10.254.0.32/27 | 10.254.0.32 - 10.254.0.63 |
 | user2 | 10.254.0.64/27 | 10.254.0.64 - 10.254.0.95 |
 | user3 | 10.254.0.96/27 | 10.254.0.96 - 10.254.0.127 |
+
+---
+
+## vSphere 구조
+
+### 폴더 구조
+
+vSphere에서 VM은 사용자별 폴더로 구성됩니다:
+
+```
+basphere-vms/                     # 기본 폴더 (config.yaml의 vsphere.folder)
+├── user1/                        # 사용자 폴더
+│   ├── user1-web-server          # VM (사용자 프리픽스 포함)
+│   └── user1-db-server
+├── user2/
+│   ├── user2-app-1
+│   └── user2-app-2
+└── ...
+```
+
+### VM 이름 규칙
+
+- **CLI에서 사용하는 이름**: 사용자가 지정한 짧은 이름 (예: `web-server`)
+- **vSphere에서의 이름**: 사용자 프리픽스 + 이름 (예: `user1-web-server`)
+
+이렇게 하면:
+- 사용자별 VM을 vCenter에서 쉽게 구분
+- vSphere 전체에서 VM 이름 고유성 보장
+- CLI에서는 짧은 이름으로 편리하게 사용
+
+### 폴더 생성 시점
+
+- 사용자 폴더는 `basphere-admin user add` 명령 시 자동 생성
+- 사용자 삭제 시 폴더도 함께 삭제 (VM이 없는 경우만)
 
 ---
 

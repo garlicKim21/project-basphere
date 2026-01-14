@@ -96,9 +96,9 @@ main() {
     local current_clusters=0
     local current_ips=0
 
-    # VM 개수
+    # VM 개수 (_folder 디렉토리 제외)
     if [[ -d "$tf_dir" ]]; then
-        current_vms=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+        current_vms=$(find "$tf_dir" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
     fi
 
     # 클러스터 개수
