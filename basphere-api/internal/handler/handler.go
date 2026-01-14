@@ -1,0 +1,347 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"path/filepath"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+
+	"github.com/basphere/basphere-api/internal/model"
+	"github.com/basphere/basphere-api/internal/provisioner"
+	"github.com/basphere/basphere-api/internal/store"
+)
+
+// Handler handles HTTP requests
+type Handler struct {
+	store       store.Store
+	provisioner provisioner.Provisioner
+	templates   *template.Template
+}
+
+// NewHandler creates a new handler
+func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir string) (*Handler, error) {
+	tmpl, err := template.ParseGlob(filepath.Join(templateDir, "*.html"))
+	if err != nil {
+		// Templates might not exist yet, that's okay
+		log.Printf("Warning: failed to parse templates: %v", err)
+		tmpl = template.New("empty")
+	}
+
+	return &Handler{
+		store:       store,
+		provisioner: prov,
+		templates:   tmpl,
+	}, nil
+}
+
+// Router returns the HTTP router
+func (h *Handler) Router() http.Handler {
+	r := chi.NewRouter()
+
+	// Middleware
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Timeout(60 * time.Second))
+
+	// Web routes (HTML)
+	r.Get("/", h.indexPage)
+	r.Get("/register", h.registerPage)
+	r.Post("/register", h.registerFormSubmit)
+	r.Get("/success", h.successPage)
+
+	// API routes (JSON)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/register", h.apiRegister)
+		r.Get("/pending", h.apiListPending)
+		r.Get("/pending/{username}", h.apiGetPending)
+		r.Post("/users/{username}/approve", h.apiApprove)
+		r.Post("/users/{username}/reject", h.apiReject)
+	})
+
+	// Health check
+	r.Get("/health", h.healthCheck)
+
+	return r
+}
+
+// JSON response helpers
+
+type apiResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+	Errors  []string    `json:"errors,omitempty"`
+}
+
+func (h *Handler) jsonResponse(w http.ResponseWriter, status int, resp apiResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) jsonError(w http.ResponseWriter, status int, message string, errors ...string) {
+	h.jsonResponse(w, status, apiResponse{
+		Success: false,
+		Message: message,
+		Errors:  errors,
+	})
+}
+
+func (h *Handler) jsonSuccess(w http.ResponseWriter, message string, data interface{}) {
+	h.jsonResponse(w, http.StatusOK, apiResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+	})
+}
+
+// Health check
+func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
+	h.jsonSuccess(w, "OK", nil)
+}
+
+// Web pages
+
+func (h *Handler) indexPage(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/register", http.StatusFound)
+}
+
+func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
+	if err := h.templates.ExecuteTemplate(w, "register.html", nil); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) successPage(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	if err := h.templates.ExecuteTemplate(w, "success.html", map[string]string{
+		"Username": username,
+	}); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) registerFormSubmit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	input := &model.RegisterInput{
+		Username:  r.FormValue("username"),
+		Email:     r.FormValue("email"),
+		Team:      r.FormValue("team"),
+		PublicKey: r.FormValue("public_key"),
+	}
+
+	if errors := input.Validate(); len(errors) > 0 {
+		// Re-render form with errors
+		data := map[string]interface{}{
+			"Errors": errors,
+			"Input":  input,
+		}
+		if err := h.templates.ExecuteTemplate(w, "register.html", data); err != nil {
+			http.Error(w, "Template error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Create registration request
+	req, err := h.createRegistrationRequest(input)
+	if err != nil {
+		data := map[string]interface{}{
+			"Errors": []string{err.Error()},
+			"Input":  input,
+		}
+		if err := h.templates.ExecuteTemplate(w, "register.html", data); err != nil {
+			http.Error(w, "Template error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	http.Redirect(w, r, "/success?username="+req.Username, http.StatusFound)
+}
+
+// API handlers
+
+func (h *Handler) apiRegister(w http.ResponseWriter, r *http.Request) {
+	var input model.RegisterInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		h.jsonError(w, http.StatusBadRequest, "Invalid JSON", err.Error())
+		return
+	}
+
+	if errors := input.Validate(); len(errors) > 0 {
+		h.jsonError(w, http.StatusBadRequest, "Validation failed", errors...)
+		return
+	}
+
+	req, err := h.createRegistrationRequest(&input)
+	if err != nil {
+		h.jsonError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "Registration request submitted", req)
+}
+
+func (h *Handler) apiListPending(w http.ResponseWriter, r *http.Request) {
+	status := model.StatusPending
+	requests, err := h.store.List(&status)
+	if err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to list requests", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "", requests)
+}
+
+func (h *Handler) apiGetPending(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+
+	req, err := h.store.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "", req)
+}
+
+func (h *Handler) apiApprove(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+
+	var input model.ApproveInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		// Allow empty body, default to "admin"
+		input.ProcessedBy = "admin"
+	}
+
+	req, err := h.store.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	if req.Status != model.StatusPending {
+		h.jsonError(w, http.StatusBadRequest, "Request is not pending")
+		return
+	}
+
+	// Check if system user already exists
+	exists, err := h.provisioner.UserExists(username)
+	if err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to check user", err.Error())
+		return
+	}
+	if exists {
+		h.jsonError(w, http.StatusConflict, "System user already exists")
+		return
+	}
+
+	// Provision the user
+	if err := h.provisioner.CreateUser(req); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to create user", err.Error())
+		return
+	}
+
+	// Update request status
+	req.Status = model.StatusApproved
+	req.ProcessedBy = input.ProcessedBy
+	req.ProcessedAt = time.Now().Format(time.RFC3339)
+	req.UpdatedAt = time.Now()
+
+	if err := h.store.Update(req); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to update request", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "User approved and created", req)
+}
+
+func (h *Handler) apiReject(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+
+	var input model.RejectInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		input.ProcessedBy = "admin"
+	}
+
+	req, err := h.store.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	if req.Status != model.StatusPending {
+		h.jsonError(w, http.StatusBadRequest, "Request is not pending")
+		return
+	}
+
+	// Update request status
+	req.Status = model.StatusRejected
+	req.ProcessedBy = input.ProcessedBy
+	req.ProcessedAt = time.Now().Format(time.RFC3339)
+	req.RejectReason = input.Reason
+	req.UpdatedAt = time.Now()
+
+	if err := h.store.Update(req); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to update request", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "Request rejected", req)
+}
+
+// Helper methods
+
+func (h *Handler) createRegistrationRequest(input *model.RegisterInput) (*model.RegistrationRequest, error) {
+	// Check if username already has pending request
+	exists, err := h.store.ExistsUsername(input.Username)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, fmt.Errorf("username %s already has a pending request", input.Username)
+	}
+
+	// Check if system user already exists
+	userExists, err := h.provisioner.UserExists(input.Username)
+	if err != nil {
+		return nil, err
+	}
+	if userExists {
+		return nil, fmt.Errorf("system user %s already exists", input.Username)
+	}
+
+	now := time.Now()
+	req := &model.RegistrationRequest{
+		ID:        generateID(),
+		Username:  input.Username,
+		Email:     input.Email,
+		Team:      input.Team,
+		PublicKey: input.PublicKey,
+		Status:    model.StatusPending,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := h.store.Create(req); err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+func generateID() string {
+	return "req-" + uuid.New().String()[:8]
+}

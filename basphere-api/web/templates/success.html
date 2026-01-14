@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basphere - 등록 요청 완료</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: #c6f6d5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .icon svg {
+            width: 40px;
+            height: 40px;
+            color: #38a169;
+        }
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 16px;
+        }
+        .message {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .username {
+            background: #f0f0f0;
+            padding: 12px 20px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 18px;
+            color: #333;
+            display: inline-block;
+            margin-bottom: 24px;
+        }
+        .next-steps {
+            background: #f7fafc;
+            border-radius: 4px;
+            padding: 20px;
+            text-align: left;
+        }
+        .next-steps h3 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+        .next-steps ol {
+            color: #666;
+            padding-left: 20px;
+            line-height: 1.8;
+        }
+        .next-steps code {
+            background: #edf2f7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+        }
+        .back-link {
+            margin-top: 24px;
+        }
+        .back-link a {
+            color: #4a90d9;
+            text-decoration: none;
+        }
+        .back-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+        </div>
+
+        <h1>등록 요청이 접수되었습니다</h1>
+
+        <p class="message">
+            관리자 승인 후 계정이 생성됩니다.<br>
+            승인 완료 시 안내 받으신 방법으로 알려드립니다.
+        </p>
+
+        <div class="username">{{.Username}}</div>
+
+        <div class="next-steps">
+            <h3>다음 단계</h3>
+            <ol>
+                <li>관리자가 요청을 검토합니다</li>
+                <li>승인되면 계정이 자동 생성됩니다</li>
+                <li>승인 후 Bastion 서버에 접속할 수 있습니다:<br>
+                    <code>ssh {{.Username}}@bastion-server-ip</code>
+                </li>
+            </ol>
+        </div>
+
+        <div class="back-link">
+            <a href="/register">다른 계정 등록 요청</a>
+        </div>
+    </div>
+</body>
+</html>

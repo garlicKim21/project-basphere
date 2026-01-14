@@ -1,0 +1,25 @@
+[Unit]
+Description=Basphere API Server
+Documentation=https://github.com/basphere/basphere-api
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/basphere-api --config /etc/basphere/api.yaml
+Restart=on-failure
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=basphere-api
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

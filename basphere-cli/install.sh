@@ -156,7 +156,7 @@ create_directories() {
     log_info "디렉토리 생성 중..."
 
     # 데이터 디렉토리
-    mkdir -p /var/lib/basphere/{ipam,terraform,clusters,users,key-requests,templates}
+    mkdir -p /var/lib/basphere/{ipam,terraform,clusters,users,pending,templates}
 
     # 로그 디렉토리
     mkdir -p /var/log/basphere
@@ -352,6 +352,9 @@ set_permissions() {
     chmod 666 /var/lib/basphere/ipam/.lock 2>/dev/null || true
     chmod 644 /var/lib/basphere/ipam/allocations.tsv 2>/dev/null || true
     chmod 666 /var/lib/basphere/ipam/leases.tsv 2>/dev/null || true
+
+    # pending 디렉토리 (등록 요청 저장 - API 서버가 쓰기 가능해야 함)
+    chmod 777 /var/lib/basphere/pending
 
     # 사용자 디렉토리 권한
     find /var/lib/basphere/users -mindepth 1 -maxdepth 1 -type d -exec chmod 755 {} \; 2>/dev/null || true

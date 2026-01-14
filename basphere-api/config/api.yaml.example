@@ -1,0 +1,13 @@
+# Basphere API Server Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+storage:
+  # 대기 중인 등록 요청 저장 디렉토리
+  pending_dir: "/var/lib/basphere/pending"
+
+provisioner:
+  # basphere-admin 스크립트 경로
+  admin_script: "/usr/local/bin/basphere-admin"
