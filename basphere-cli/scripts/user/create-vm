@@ -219,18 +219,24 @@ create_single_vm() {
 }
 EOF
 
-    # vSphere 인증 정보 로드
-    if ! load_vsphere_env; then
+    # vSphere 인증 정보 파일 확인
+    if [[ ! -f "$BASPHERE_VSPHERE_ENV" ]]; then
+        log_error "vSphere 인증 정보 파일을 찾을 수 없습니다: $BASPHERE_VSPHERE_ENV"
         "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
         rm -rf "$tf_dir"
         return 1
     fi
 
-    # Terraform 실행
+    # Terraform 실행 (서브쉘 내에서 환경변수 로드)
     log_info "VM 생성 중... (몇 분 소요될 수 있습니다)"
 
     (
         cd "$tf_dir"
+
+        # 환경변수 로드
+        set -a
+        source "$BASPHERE_VSPHERE_ENV"
+        set +a
 
         # terraform init
         if ! terraform init -no-color > terraform-init.log 2>&1; then

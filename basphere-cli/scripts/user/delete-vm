@@ -71,15 +71,19 @@ delete_single_vm() {
             mv "$metadata_file.tmp" "$metadata_file"
     fi
 
-    # vSphere 인증 정보 로드
-    load_vsphere_env 2>/dev/null || true
-
-    # Terraform destroy 실행
+    # Terraform destroy 실행 (서브쉘 내에서 환경변수 로드)
     local destroy_success=true
 
     if [[ -f "$tf_dir/main.tf" ]]; then
         (
             cd "$tf_dir"
+
+            # 환경변수 로드
+            if [[ -f "$BASPHERE_VSPHERE_ENV" ]]; then
+                set -a
+                source "$BASPHERE_VSPHERE_ENV"
+                set +a
+            fi
 
             # terraform destroy
             if ! terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
