@@ -58,19 +58,37 @@ get_os_list() {
 # OS 설명 가져오기
 get_os_description() {
     local os="$1"
-    get_config ".templates.os.$os.description" "$os"
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].description" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "$os"
+    else
+        echo "$value"
+    fi
 }
 
 # OS 템플릿 이름 가져오기
 get_os_template() {
     local os="$1"
-    get_config ".templates.os.$os.template" ""
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].template" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo ""
+    else
+        echo "$value"
+    fi
 }
 
 # OS 기본 사용자 가져오기
 get_os_default_user() {
     local os="$1"
-    get_config ".templates.os.$os.default_user" "ubuntu"
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].default_user" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "ubuntu"
+    else
+        echo "$value"
+    fi
 }
 
 # OS 유효성 검사
@@ -394,7 +412,7 @@ main() {
         for os in "${os_array[@]}"; do
             local desc
             desc=$(get_os_description "$os")
-            os_options+=("$os - $desc")
+            os_options+=("$desc")
         done
 
         local os_selection
