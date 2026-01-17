@@ -109,9 +109,9 @@ main() {
     echo ""
 
     if [[ "$show_all" == "true" ]]; then
-        print_table_header "%-20s %-16s %-10s %-10s %-20s" "NAME" "IP" "SPEC" "STATUS" "CREATED"
+        print_table_header "%-20s %-16s %-14s %-10s %-10s %-20s" "NAME" "IP" "OS" "SPEC" "STATUS" "CREATED"
     else
-        print_table_header "%-20s %-16s %-10s %-10s" "NAME" "IP" "SPEC" "STATUS"
+        print_table_header "%-20s %-16s %-14s %-10s %-10s" "NAME" "IP" "OS" "SPEC" "STATUS"
     fi
 
     local count=0
@@ -127,9 +127,10 @@ main() {
         local metadata_file="$vm_dir/metadata.json"
 
         if [[ -f "$metadata_file" ]]; then
-            local ip_address spec status created_at
+            local ip_address os_type spec status created_at
 
             ip_address=$(jq -r '.ip_address // "-"' "$metadata_file")
+            os_type=$(jq -r '.os // "-"' "$metadata_file")
             spec=$(jq -r '.spec // "-"' "$metadata_file")
             status=$(jq -r '.status // "unknown"' "$metadata_file")
             created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
@@ -149,9 +150,9 @@ main() {
             esac
 
             if [[ "$show_all" == "true" ]]; then
-                printf "%-20s %-16s %-10s %-10b %-20s\n" "$vm_name" "$ip_address" "$spec" "$status_display" "$created_at"
+                printf "%-20s %-16s %-14s %-10s %-10b %-20s\n" "$vm_name" "$ip_address" "$os_type" "$spec" "$status_display" "$created_at"
             else
-                printf "%-20s %-16s %-10s %-10b\n" "$vm_name" "$ip_address" "$spec" "$status_display"
+                printf "%-20s %-16s %-14s %-10s %-10b\n" "$vm_name" "$ip_address" "$os_type" "$spec" "$status_display"
             fi
 
             ((count++)) || true
