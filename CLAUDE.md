@@ -50,13 +50,40 @@ project-basphere/
 
 ## 테스트 환경
 
+### Bastion 서버
 | 항목 | 값 |
 |------|-----|
 | Bastion IP | 172.20.0.10 |
 | 관리자 계정 | basphere |
-| vCenter | vcenter.home.local |
-| VM 네트워크 | 10.254.0.0/21 |
+| 코드 경로 | /opt/basphere-cli, /opt/basphere-api |
+
+### vSphere 환경
+| 항목 | 값 |
+|------|-----|
+| vCenter | vcsa.basphere.local |
+| Datacenter | Basphere |
+| Cluster | Basphere-Home |
+| Datastore | 01-VM-Block |
+| VM Network | 99-basphere-cli |
+| VM Folder | basphere-cli |
+| VM Template | ubuntu-jammy-22.04-cloudimg |
+
+### 네트워크 설정
+| 항목 | 값 |
+|------|-----|
+| CIDR | 10.254.0.0/21 |
+| Gateway | 10.254.0.1 |
+| Netmask | 255.255.248.0 (/21) |
 | MTU | 1450 (오버레이 네트워크) |
+| DNS | 8.8.8.8, 1.1.1.1 |
+| 사용자당 IP 블록 | /27 (32개) |
+
+### 사용자 할당량
+| 항목 | 기본값 |
+|------|--------|
+| 최대 VM 수 | 10 |
+| 최대 클러스터 | 3 |
+| 최대 IP | 32 |
 
 ## 주요 설정 파일 (Bastion)
 
