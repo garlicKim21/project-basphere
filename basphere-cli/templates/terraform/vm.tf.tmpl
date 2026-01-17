@@ -226,19 +226,28 @@ locals {
     package_update: false
     package_upgrade: false
     write_files:
-      - path: /etc/netplan/99-basphere-mtu.yaml
+      - path: /etc/netplan/50-basphere.yaml
         permissions: '0600'
         content: |
           network:
             version: 2
             ethernets:
               ens192:
+                dhcp4: false
                 mtu: ${var.mtu}
+                addresses:
+                  - ${var.ip_address}/${NETWORK_PREFIX}
+                routes:
+                  - to: default
+                    via: ${var.gateway}
+                nameservers:
+                  addresses: ${jsonencode(var.dns_servers)}
     runcmd:
+      - rm -f /etc/netplan/50-cloud-init.yaml
+      - netplan apply
       - echo "Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized" > /var/log/basphere-init.log
       - echo "Owner: ${var.owner}" >> /var/log/basphere-init.log
-      - ip link set dev ens192 mtu ${var.mtu}
-      - netplan apply
+      - echo "IP: ${var.ip_address}" >> /var/log/basphere-init.log
     final_message: "Basphere VM is ready after $UPTIME seconds"
   EOF
 }
