@@ -55,7 +55,11 @@ project-basphere/
 |------|-----|
 | Bastion IP | 172.20.0.10 |
 | 관리자 계정 | basphere |
-| 코드 경로 | /opt/basphere-cli, /opt/basphere-api |
+| Git 저장소 | /opt/basphere-cli/ (project-basphere 클론) |
+| CLI 소스 | /opt/basphere-cli/basphere-cli/ |
+| API 소스 | /opt/basphere-cli/basphere-api/ |
+| 설치된 CLI | /usr/local/bin/ (basphere-admin, create-vm 등) |
+| 설치된 라이브러리 | /usr/local/lib/basphere/ |
 
 ### vSphere 환경
 | 항목 | 값 |
@@ -123,11 +127,13 @@ cd basphere-api && make build-linux
 
 ### Bastion (테스트)
 ```bash
-# 코드 업데이트 및 재설치
-cd /opt/basphere-cli && sudo git pull && sudo ./install.sh
+# 코드 업데이트 및 CLI 재설치
+cd /opt/basphere-cli && sudo git pull
+cd /opt/basphere-cli/basphere-cli && sudo ./install.sh
 
-# API 서버 실행 (개발 모드)
-cd /opt/basphere-api && sudo ./build/basphere-api-linux-amd64 --dev
+# API 서버 빌드 및 실행 (개발 모드)
+cd /opt/basphere-cli/basphere-api && make tidy && make build-linux
+sudo ./build/basphere-api-linux-amd64 --dev
 
 # 사용자 관리
 sudo basphere-admin user list
