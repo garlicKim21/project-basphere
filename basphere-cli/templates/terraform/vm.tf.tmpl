@@ -198,22 +198,18 @@ locals {
   })
 
   # cloud-init network configuration (v2)
-  network_config = yamlencode({
-    version = 2
-    ethernets = {
-      ens192 = {
-        dhcp4 = false
-        mtu   = var.mtu
-        addresses = [
-          "${var.ip_address}/${NETWORK_PREFIX}"
-        ]
-        gateway4 = var.gateway
-        nameservers = {
-          addresses = var.dns_servers
-        }
-      }
-    }
-  })
+  network_config = <<-NETCFG
+    version: 2
+    ethernets:
+      ens192:
+        dhcp4: false
+        mtu: ${var.mtu}
+        addresses:
+          - ${var.ip_address}/${NETWORK_PREFIX}
+        gateway4: ${var.gateway}
+        nameservers:
+          addresses: ${jsonencode(var.dns_servers)}
+  NETCFG
 
   # cloud-init userdata
   # hostname은 짧은 이름 사용
