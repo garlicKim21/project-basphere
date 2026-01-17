@@ -190,26 +190,31 @@ locals {
   # VM이 생성될 폴더 경로 (폴더는 사용자 생성 시 이미 만들어짐)
   vm_folder_path = "${var.base_folder}/${var.owner}"
 
-  # cloud-init metadata (network configuration)
-  # hostname은 짧은 이름 사용 (프리픽스 없이)
+  # cloud-init network configuration (v2) - metadata 안에 포함됨
+  network_config = {
+    version = 2
+    ethernets = {
+      ens192 = {
+        dhcp4 = false
+        mtu   = var.mtu
+        addresses = [
+          "${var.ip_address}/${NETWORK_PREFIX}"
+        ]
+        gateway4 = var.gateway
+        nameservers = {
+          addresses = var.dns_servers
+        }
+      }
+    }
+  }
+
+  # cloud-init metadata (network configuration 포함)
+  # Ubuntu 24.04+ cloud-init은 network 설정이 metadata 안에 있어야 함
   metadata = yamlencode({
     "local-hostname" = var.vm_name
     "instance-id"    = var.vsphere_vm_name
+    "network"        = local.network_config
   })
-
-  # cloud-init network configuration (v2)
-  network_config = <<-NETCFG
-    version: 2
-    ethernets:
-      ens192:
-        dhcp4: false
-        mtu: ${var.mtu}
-        addresses:
-          - ${var.ip_address}/${NETWORK_PREFIX}
-        gateway4: ${var.gateway}
-        nameservers:
-          addresses: ${jsonencode(var.dns_servers)}
-  NETCFG
 
   # cloud-init userdata
   # hostname은 짧은 이름 사용
@@ -296,13 +301,12 @@ resource "vsphere_virtual_machine" "vm" {
   }
 
   # cloud-init via VMware guestinfo
+  # Ubuntu 24.04+: network 설정은 metadata 안에 포함됨 (guestinfo.network 별도 사용 안 함)
   extra_config = {
     "guestinfo.metadata"          = base64encode(local.metadata)
     "guestinfo.metadata.encoding" = "base64"
     "guestinfo.userdata"          = base64encode(local.userdata)
     "guestinfo.userdata.encoding" = "base64"
-    "guestinfo.network"           = base64encode(local.network_config)
-    "guestinfo.network.encoding"  = "base64"
   }
 
   # Custom attributes (태그)
@@ -311,7 +315,7 @@ resource "vsphere_virtual_machine" "vm" {
   lifecycle {
     ignore_changes = [
       extra_config["guestinfo.userdata"],
-      extra_config["guestinfo.network"],
+      extra_config["guestinfo.metadata"],
     ]
   }
 
