@@ -333,8 +333,14 @@ install_cli_scripts() {
 set_permissions() {
     log_info "권한 설정 중..."
 
-    # 데이터 디렉토리 기본 소유권
-    chown -R basphere:basphere /var/lib/basphere
+    # 기본 디렉토리 소유권 (사용자 VM 데이터 제외)
+    chown basphere:basphere /var/lib/basphere
+    chown basphere:basphere /var/lib/basphere/users 2>/dev/null || true
+    chown basphere:basphere /var/lib/basphere/clusters 2>/dev/null || true
+    chown basphere:basphere /var/lib/basphere/terraform 2>/dev/null || true
+    chown -R basphere:basphere /var/lib/basphere/templates 2>/dev/null || true
+    chown -R basphere:basphere /var/lib/basphere/ipam 2>/dev/null || true
+    chown -R basphere:basphere /var/lib/basphere/pending 2>/dev/null || true
 
     # 기본 디렉토리 권한 (읽기 가능)
     chmod 755 /var/lib/basphere
@@ -345,6 +351,7 @@ set_permissions() {
 
     # terraform 디렉토리 (사용자가 VM 디렉토리 생성 가능해야 함)
     chmod 755 /var/lib/basphere/terraform
+    # 사용자별 디렉토리는 사용자 소유 유지, 권한만 설정
     find /var/lib/basphere/terraform -mindepth 1 -maxdepth 1 -type d -exec chmod 777 {} \; 2>/dev/null || true
 
     # IPAM 디렉토리 (사용자가 락 획득 및 파일 쓰기 가능해야 함)
