@@ -55,9 +55,9 @@ project-basphere/
 |------|-----|
 | Bastion IP | 172.20.0.10 |
 | 관리자 계정 | basphere |
-| Git 저장소 | /opt/basphere-cli/ (project-basphere 클론) |
-| CLI 소스 | /opt/basphere-cli/basphere-cli/ |
-| API 소스 | /opt/basphere-cli/basphere-api/ |
+| Git 저장소 | /opt/basphere/ |
+| CLI 소스 | /opt/basphere/basphere-cli/ |
+| API 소스 | /opt/basphere/basphere-api/ |
 | 설치된 CLI | /usr/local/bin/ (basphere-admin, create-vm 등) |
 | 설치된 라이브러리 | /usr/local/lib/basphere/ |
 
@@ -128,11 +128,11 @@ cd basphere-api && make build-linux
 ### Bastion (테스트)
 ```bash
 # 코드 업데이트 및 CLI 재설치
-cd /opt/basphere-cli && sudo git pull
-cd /opt/basphere-cli/basphere-cli && sudo ./install.sh
+cd /opt/basphere && sudo git pull
+cd /opt/basphere/basphere-cli && sudo ./install.sh
 
 # API 서버 빌드 및 실행 (개발 모드)
-cd /opt/basphere-cli/basphere-api && make tidy && make build-linux
+cd /opt/basphere/basphere-api && make tidy && make build-linux
 sudo ./build/basphere-api-linux-amd64 --dev
 
 # 사용자 관리
@@ -167,3 +167,101 @@ delete-vm test
 - vSphere customization과 cloud-init을 함께 사용 시 네트워크 설정 충돌 주의
 - snap으로 설치된 yq는 /etc 접근 불가 (바이너리 버전 사용)
 - Terraform 상태 파일은 로컬 저장 (각 사용자별 디렉토리)
+
+## 새 환경에 설치하기
+
+다른 환경(회사 등)에 Basphere를 이식할 때 참고하세요.
+
+### 1. Bastion 서버 준비
+
+```bash
+# Ubuntu 22.04 LTS 권장
+# 필수 사양: 2 vCPU, 4GB RAM, 50GB 디스크
+
+# 관리자 계정 생성
+sudo useradd -m -s /bin/bash basphere
+sudo passwd basphere
+
+# Git 저장소 클론
+sudo mkdir -p /opt/basphere
+sudo chown basphere:basphere /opt/basphere
+cd /opt/basphere
+git clone https://github.com/your-org/project-basphere.git .
+```
+
+### 2. 환경별 설정 파일 수정
+
+#### /etc/basphere/config.yaml
+```yaml
+# 환경에 맞게 수정 필요한 항목
+vsphere:
+  server: "vcenter.your-company.local"    # vCenter 주소
+  datacenter: "Your-DC"                   # 데이터센터 이름
+  cluster: "Your-Cluster"                 # 클러스터 이름
+  datastore: "Your-Datastore"             # 데이터스토어 이름
+  network: "VM-Network"                   # VM 포트그룹 이름
+  folder: "basphere-vms"                  # VM 폴더 이름
+
+templates:
+  vm: "ubuntu-22.04-template"             # cloud-init 지원 VM 템플릿
+
+network:
+  cidr: "10.254.0.0/21"                   # 사용자 VM용 IP 대역
+  gateway: "10.254.0.1"                   # 게이트웨이
+  netmask: "255.255.248.0"
+  mtu: 1500                               # 일반 네트워크는 1500, 오버레이는 1450
+  dns:
+    - "8.8.8.8"
+    - "1.1.1.1"
+```
+
+#### /etc/basphere/vsphere.env
+```bash
+# vCenter 인증 정보 (민감 정보!)
+export VSPHERE_USER='administrator@your-domain.local'
+export VSPHERE_PASSWORD='your-password'
+export VSPHERE_ALLOW_UNVERIFIED_SSL='true'
+```
+
+### 3. 설치 실행
+
+```bash
+# CLI 설치 (의존성 자동 설치: jq, yq, terraform)
+cd /opt/basphere/basphere-cli
+sudo ./install.sh
+
+# API 서버 빌드 (Go 1.21+ 필요)
+cd /opt/basphere/basphere-api
+make tidy && make build-linux
+```
+
+### 4. VM 템플릿 준비
+
+vCenter에 다음 조건을 만족하는 VM 템플릿이 필요합니다:
+- Ubuntu 22.04 LTS (cloud-init 포함)
+- open-vm-tools 설치됨
+- cloud-init datasource: OVF 활성화
+
+### 5. 환경별 체크리스트
+
+| 항목 | 홈랩 | 회사 |
+|------|------|------|
+| Bastion IP | 172.20.0.10 | 환경에 맞게 |
+| vCenter | vcsa.basphere.local | 회사 vCenter |
+| Datacenter | Basphere | 회사 DC |
+| 네트워크 대역 | 10.254.0.0/21 | 할당받은 대역 |
+| MTU | 1450 (오버레이) | 1500 (일반) |
+| DNS | 8.8.8.8 | 회사 DNS |
+
+### 6. 설치 후 확인
+
+```bash
+# CLI 동작 확인
+sudo basphere-admin user list
+
+# API 서버 실행
+sudo /opt/basphere/basphere-api/build/basphere-api-linux-amd64 --dev
+
+# 웹 폼 접속 테스트
+curl http://localhost:8080/register
+```
