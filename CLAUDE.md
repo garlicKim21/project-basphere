@@ -167,6 +167,7 @@ delete-vm test
 - vSphere customization과 cloud-init을 함께 사용 시 네트워크 설정 충돌 주의
 - snap으로 설치된 yq는 /etc 접근 불가 (바이너리 버전 사용)
 - Terraform 상태 파일은 로컬 저장 (각 사용자별 디렉토리)
+- **Ubuntu 24.04 cloud-init 네트워크 설정**: 네트워크 설정은 `guestinfo.metadata` 안에 `network` 키로 포함해야 함. 별도의 `guestinfo.network`는 작동하지 않음 (vm.tf.tmpl 참조)
 
 ## 새 환경에 설치하기
 
