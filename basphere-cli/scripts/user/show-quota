@@ -139,7 +139,9 @@ EOF
 
     # IP 블록 정보
     if [[ -n "$ip_block" ]]; then
-        echo "IP 블록: $ip_block (${max_ips}개)"
+        local ip_block_range
+        ip_block_range=$(format_ip_block_range "$ip_block" "$max_ips")
+        echo "IP 블록: $ip_block_range (${max_ips}개)"
     else
         echo "IP 블록: 할당되지 않음"
     fi

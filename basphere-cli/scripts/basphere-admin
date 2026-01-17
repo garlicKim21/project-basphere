@@ -348,7 +348,7 @@ user_list() {
         exit 0
     fi
 
-    print_table_header "%-15s %-18s %-12s %-8s %s" "USERNAME" "IP_BLOCK" "VMs" "STATUS" "CREATED"
+    print_table_header "%-15s %-33s %-6s %-8s %s" "USERNAME" "IP_BLOCK" "VMs" "STATUS" "CREATED"
 
     for user_dir in "$users_dir"/*/; do
         [[ ! -d "$user_dir" ]] && continue
@@ -359,9 +359,10 @@ user_list() {
         local metadata_file="$user_dir/metadata.json"
 
         if [[ -f "$metadata_file" ]]; then
-            local ip_block created_at status vm_count
+            local ip_block_start ip_block_range created_at status vm_count
 
-            ip_block=$(jq -r '.ip_block // "-"' "$metadata_file")
+            ip_block_start=$(jq -r '.ip_block // "-"' "$metadata_file")
+            ip_block_range=$(format_ip_block_range "$ip_block_start")
             created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
             status=$(jq -r '.status // "active"' "$metadata_file")
 
@@ -373,7 +374,7 @@ user_list() {
                 vm_count=0
             fi
 
-            print_table_row "%-15s %-18s %-12s %-8s %s" "$username" "$ip_block" "$vm_count" "$status" "$created_at"
+            print_table_row "%-15s %-33s %-6s %-8s %s" "$username" "$ip_block_range" "$vm_count" "$status" "$created_at"
         fi
     done
 }
@@ -401,7 +402,15 @@ user_show() {
 
     if [[ -f "$metadata_file" ]]; then
         echo "기본 정보:"
-        jq -r '. | to_entries[] | "  \(.key): \(.value)"' "$metadata_file"
+        # ip_block은 범위로 표시
+        local ip_block_start
+        ip_block_start=$(jq -r '.ip_block // ""' "$metadata_file")
+
+        jq -r '. | to_entries[] | select(.key != "ip_block") | "  \(.key): \(.value)"' "$metadata_file"
+
+        if [[ -n "$ip_block_start" && "$ip_block_start" != "null" ]]; then
+            echo "  ip_block: $(format_ip_block_range "$ip_block_start")"
+        fi
     fi
 
     echo ""

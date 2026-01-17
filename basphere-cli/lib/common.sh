@@ -351,6 +351,24 @@ int_to_ip() {
     echo "$(( (int >> 24) & 255 )).$(( (int >> 16) & 255 )).$(( (int >> 8) & 255 )).$(( int & 255 ))"
 }
 
+# IP 블록 범위 포맷 (시작IP - 끝IP)
+format_ip_block_range() {
+    local block_start="$1"
+    local block_size="${2:-32}"  # 기본값: /27 = 32개
+
+    if [[ -z "$block_start" || "$block_start" == "-" || "$block_start" == "null" ]]; then
+        echo "-"
+        return
+    fi
+
+    local start_int end_int block_end
+    start_int=$(ip_to_int "$block_start")
+    end_int=$((start_int + block_size - 1))
+    block_end=$(int_to_ip "$end_int")
+
+    echo "${block_start} - ${block_end}"
+}
+
 # 테이블 형식 출력
 print_table_header() {
     local format="$1"

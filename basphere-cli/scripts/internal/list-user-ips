@@ -30,10 +30,11 @@ main() {
     load_network_config
 
     # 사용자 블록 정보
-    local block_start
+    local block_start block_range
     if block_start=$(get_user_block "$user"); then
+        block_range=$(format_ip_block_range "$block_start" "$NETWORK_BLOCK_SIZE")
         echo "=== 블록 정보 ==="
-        echo "블록 시작: $block_start"
+        echo "블록 범위: $block_range"
         echo "블록 크기: $NETWORK_BLOCK_SIZE"
         echo ""
     else
