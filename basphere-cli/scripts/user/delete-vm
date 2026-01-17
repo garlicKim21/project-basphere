@@ -57,10 +57,12 @@ delete_single_vm() {
         return 1
     fi
 
-    # IP 주소 가져오기 (정리용)
+    # 메타데이터에서 정보 가져오기 (정리 및 로깅용)
     local ip_address=""
+    local os_type=""
     if [[ -f "$metadata_file" ]]; then
         ip_address=$(jq -r '.ip_address // ""' "$metadata_file")
+        os_type=$(jq -r '.os // ""' "$metadata_file")
     fi
 
     log_info "VM 삭제 중: $vm_name"
@@ -111,7 +113,7 @@ delete_single_vm() {
     rm -rf "$tf_dir"
 
     # 감사 로그
-    audit_log "DELETE_VM" "$vm_name" "user=$user,ip=$ip_address"
+    audit_log "DELETE_VM" "$vm_name" "user=$user,os=$os_type,ip=$ip_address"
 
     if [[ "$destroy_success" == "true" ]]; then
         log_success "VM 삭제 완료: $vm_name"
@@ -178,6 +180,7 @@ main() {
         echo "삭제할 VM 정보:"
         echo "  - 이름: $vm_name"
         echo "  - IP: $(jq -r '.ip_address // "-"' "$metadata_file")"
+        echo "  - OS: $(jq -r '.os // "-"' "$metadata_file")"
         echo "  - 스펙: $(jq -r '.spec // "-"' "$metadata_file")"
         echo "  - 상태: $(jq -r '.status // "-"' "$metadata_file")"
         echo ""
