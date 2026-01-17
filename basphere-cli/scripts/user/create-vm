@@ -37,16 +37,48 @@ VM 생성
 
 옵션:
   -n, --name <name>     VM 이름 (대화형 입력 가능)
+  -o, --os <os>         OS 종류 (ubuntu-24.04, rocky-10)
   -s, --spec <spec>     스펙 (small, medium, large)
   -c, --count <count>   생성할 VM 수 (기본값: 1)
   -h, --help            도움말
 
 예시:
-  create-vm                          # 대화형 모드
-  create-vm -n my-server -s medium   # 명령행 모드
-  create-vm -n web -s small -c 3     # 3대 생성
+  create-vm                                    # 대화형 모드
+  create-vm -n my-server -o ubuntu-24.04 -s medium   # 명령행 모드
+  create-vm -n web -o rocky-10 -s small -c 3         # 3대 생성
 EOF
     exit 0
+}
+
+# OS 목록 가져오기
+get_os_list() {
+    yq eval '.templates.os | keys | .[]' "$BASPHERE_CONFIG" 2>/dev/null
+}
+
+# OS 설명 가져오기
+get_os_description() {
+    local os="$1"
+    get_config ".templates.os.$os.description" "$os"
+}
+
+# OS 템플릿 이름 가져오기
+get_os_template() {
+    local os="$1"
+    get_config ".templates.os.$os.template" ""
+}
+
+# OS 기본 사용자 가져오기
+get_os_default_user() {
+    local os="$1"
+    get_config ".templates.os.$os.default_user" "ubuntu"
+}
+
+# OS 유효성 검사
+validate_os() {
+    local os="$1"
+    local template
+    template=$(get_os_template "$os")
+    [[ -n "$template" ]]
 }
 
 # VM 스펙 목록 가져오기
@@ -91,10 +123,11 @@ get_user_ssh_key() {
 # Terraform 파일 생성
 generate_terraform_file() {
     local vm_name="$1"
-    local spec="$2"
-    local ip_address="$3"
-    local user="$4"
-    local output_dir="$5"
+    local os_type="$2"
+    local spec="$3"
+    local ip_address="$4"
+    local user="$5"
+    local output_dir="$6"
 
     local template_file="$TEMPLATE_DIR/vm.tf.tmpl"
 
@@ -104,7 +137,7 @@ generate_terraform_file() {
     fi
 
     # 설정 값 로드
-    local vsphere_server datacenter cluster datastore network resource_pool vm_folder template
+    local vsphere_server datacenter cluster datastore network resource_pool vm_folder template default_user
     vsphere_server=$(get_config '.vsphere.server' 'vcenter.example.local')
     datacenter=$(get_config '.vsphere.datacenter' 'DC1')
     cluster=$(get_config '.vsphere.cluster' 'Cluster1')
@@ -112,7 +145,10 @@ generate_terraform_file() {
     network=$(get_config '.vsphere.network' 'VM Network')
     resource_pool=$(get_config '.vsphere.resource_pool' '/DC1/host/Cluster1/Resources')
     vm_folder=$(get_config '.vsphere.folder' 'basphere-vms')
-    template=$(get_config '.templates.vm' 'ubuntu-22.04-cloudimg')
+
+    # OS별 설정
+    template=$(get_os_template "$os_type")
+    default_user=$(get_os_default_user "$os_type")
 
     # 네트워크 설정
     local gateway netmask dns_servers network_prefix mtu
@@ -155,6 +191,7 @@ generate_terraform_file() {
         -e "s|\${RESOURCE_POOL}|$resource_pool|g" \
         -e "s|\${VM_FOLDER}|$vm_folder|g" \
         -e "s|\${TEMPLATE}|$template|g" \
+        -e "s|\${DEFAULT_USER}|$default_user|g" \
         -e "s|\${NUM_CPUS}|$num_cpus|g" \
         -e "s|\${MEMORY_MB}|$memory_mb|g" \
         -e "s|\${DISK_GB}|$disk_gb|g" \
@@ -171,10 +208,11 @@ generate_terraform_file() {
 # VM 생성 실행
 create_single_vm() {
     local vm_name="$1"
-    local spec="$2"
-    local user="$3"
+    local os_type="$2"
+    local spec="$3"
+    local user="$4"
 
-    log_info "VM 생성 준비 중: $vm_name"
+    log_info "VM 생성 준비 중: $vm_name ($os_type, $spec)"
 
     # Terraform 디렉토리
     local tf_dir="$BASPHERE_DATA_DIR/terraform/$user/$vm_name"
@@ -198,7 +236,7 @@ create_single_vm() {
     mkdir -p "$tf_dir"
 
     # Terraform 파일 생성
-    if ! generate_terraform_file "$vm_name" "$spec" "$ip_address" "$user" "$tf_dir"; then
+    if ! generate_terraform_file "$vm_name" "$os_type" "$spec" "$ip_address" "$user" "$tf_dir"; then
         # 실패 시 IP 반환
         "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
         rm -rf "$tf_dir"
@@ -208,12 +246,18 @@ create_single_vm() {
     # vSphere VM 이름 (사용자 프리픽스 포함)
     local vsphere_vm_name="${user}-${vm_name}"
 
+    # OS 기본 사용자
+    local default_user
+    default_user=$(get_os_default_user "$os_type")
+
     # 메타데이터 생성
     cat > "$tf_dir/metadata.json" << EOF
 {
     "name": "$vm_name",
     "vsphere_vm_name": "$vsphere_vm_name",
     "owner": "$user",
+    "os": "$os_type",
+    "default_user": "$default_user",
     "spec": "$spec",
     "ip_address": "$ip_address",
     "created_at": "$(get_timestamp)",
@@ -265,7 +309,7 @@ EOF
         mv "$tf_dir/metadata.json.tmp" "$tf_dir/metadata.json"
 
     # 감사 로그
-    audit_log "CREATE_VM" "$vm_name" "user=$user,spec=$spec,ip=$ip_address"
+    audit_log "CREATE_VM" "$vm_name" "user=$user,os=$os_type,spec=$spec,ip=$ip_address"
 
     log_success "VM 생성 완료: $vm_name ($ip_address)"
     return 0
@@ -274,6 +318,7 @@ EOF
 # 메인 함수
 main() {
     local vm_name=""
+    local os_type=""
     local spec=""
     local count=1
 
@@ -282,6 +327,10 @@ main() {
         case "$1" in
             -n|--name)
                 vm_name="$2"
+                shift 2
+                ;;
+            -o|--os)
+                os_type="$2"
                 shift 2
                 ;;
             -s|--spec)
@@ -313,7 +362,7 @@ main() {
     echo "=== VM 생성 ==="
     echo ""
 
-    # 대화형 입력 (값이 없는 경우)
+    # 1. VM 이름 입력
     if [[ -z "$vm_name" ]]; then
         vm_name=$(prompt_input "VM 이름")
 
@@ -328,7 +377,43 @@ main() {
         exit 1
     fi
 
-    # 스펙 선택
+    # 2. OS 선택 (필수)
+    if [[ -z "$os_type" ]]; then
+        echo ""
+        local os_list
+        os_list=$(get_os_list)
+
+        if [[ -z "$os_list" ]]; then
+            log_error "사용 가능한 OS가 설정되지 않았습니다"
+            log_info "관리자에게 문의하세요"
+            exit 1
+        fi
+
+        local os_array=()
+        while IFS= read -r os; do
+            [[ -n "$os" ]] && os_array+=("$os")
+        done <<< "$os_list"
+
+        local os_options=()
+        for os in "${os_array[@]}"; do
+            local desc
+            desc=$(get_os_description "$os")
+            os_options+=("$os - $desc")
+        done
+
+        local os_selection
+        os_selection=$(prompt_select "OS 선택" "${os_options[@]}")
+        os_type="${os_array[$os_selection]}"
+    else
+        # 명령행에서 OS 지정 시 유효성 검사
+        if ! validate_os "$os_type"; then
+            log_error "지원하지 않는 OS입니다: $os_type"
+            log_info "사용 가능한 OS: $(get_os_list | tr '\n' ' ')"
+            exit 1
+        fi
+    fi
+
+    # 3. 스펙 선택
     if [[ -z "$spec" ]]; then
         echo ""
         local specs_list
@@ -347,7 +432,7 @@ main() {
         spec="${specs_array[$selection]}"
     fi
 
-    # 대수 입력
+    # 4. 대수 입력
     if [[ $count -eq 1 ]]; then
         echo ""
         count=$(prompt_number "생성할 VM 대수" 1 1 10)
@@ -367,9 +452,13 @@ main() {
     fi
 
     # 확인
+    local default_user
+    default_user=$(get_os_default_user "$os_type")
+
     echo ""
     echo "생성할 VM 정보:"
     echo "  - 이름: $vm_name"
+    echo "  - OS: $os_type ($(get_os_description "$os_type"))"
     echo "  - 스펙: $spec ($(get_spec_details "$spec"))"
     echo "  - 대수: $count"
     echo ""
@@ -393,7 +482,7 @@ main() {
             current_vm_name="${vm_name}-${i}"
         fi
 
-        if create_single_vm "$current_vm_name" "$spec" "$CURRENT_USER"; then
+        if create_single_vm "$current_vm_name" "$os_type" "$spec" "$CURRENT_USER"; then
             ((created++)) || true
         else
             ((failed++)) || true
@@ -408,7 +497,7 @@ main() {
     fi
     echo "=========================================="
     echo ""
-    echo "VM 접속: ssh ubuntu@<IP_ADDRESS>"
+    echo "VM 접속: ssh $default_user@<IP_ADDRESS>"
     echo "VM 목록: list-vms"
 }
 

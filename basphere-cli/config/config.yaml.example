@@ -13,8 +13,16 @@ vsphere:
 
 # VM 템플릿 설정
 templates:
-  # Ubuntu VM 템플릿 (cloud-init + open-vm-tools 포함)
-  vm: "ubuntu-22.04-cloudimg"
+  # OS별 템플릿 설정 (cloud-init + open-vm-tools 포함 필수)
+  os:
+    ubuntu-24.04:
+      template: "ubuntu-noble-24.04-cloudimg"    # vSphere 템플릿 이름
+      default_user: "ubuntu"                      # cloud-init 기본 사용자
+      description: "Ubuntu 24.04 LTS (Noble)"
+    rocky-10:
+      template: "rocky-linux-10.1-cloudimg"      # vSphere 템플릿 이름
+      default_user: "rocky"                       # cloud-init 기본 사용자
+      description: "Rocky Linux 10.1"
 
 # 네트워크 설정 (Dev Network)
 network:

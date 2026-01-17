@@ -222,7 +222,7 @@ locals {
     hostname: ${var.vm_name}
     manage_etc_hosts: true
     users:
-      - name: ubuntu
+      - name: ${DEFAULT_USER}
         sudo: ALL=(ALL) NOPASSWD:ALL
         shell: /bin/bash
         ssh_authorized_keys:
