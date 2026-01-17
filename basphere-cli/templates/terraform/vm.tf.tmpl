@@ -287,30 +287,17 @@ resource "vsphere_virtual_machine" "vm" {
 
   clone {
     template_uuid = data.vsphere_virtual_machine.template.id
-
-    customize {
-      linux_options {
-        # hostname은 짧은 이름 사용
-        host_name = var.vm_name
-        domain    = "local"
-      }
-
-      network_interface {
-        ipv4_address = var.ip_address
-        ipv4_netmask = ${NETWORK_PREFIX}
-      }
-
-      ipv4_gateway    = var.gateway
-      dns_server_list = var.dns_servers
-    }
+    # vSphere customization 대신 cloud-init 사용 (Ubuntu Cloud Image 호환)
   }
 
-  # cloud-init via vApp properties (VMware guestinfo)
+  # cloud-init via VMware guestinfo
   extra_config = {
     "guestinfo.metadata"          = base64encode(local.metadata)
     "guestinfo.metadata.encoding" = "base64"
     "guestinfo.userdata"          = base64encode(local.userdata)
     "guestinfo.userdata.encoding" = "base64"
+    "guestinfo.network"           = base64encode(local.network_config)
+    "guestinfo.network.encoding"  = "base64"
   }
 
   # Custom attributes (태그)
@@ -318,8 +305,8 @@ resource "vsphere_virtual_machine" "vm" {
 
   lifecycle {
     ignore_changes = [
-      clone[0].customize[0].linux_options[0].host_name,
       extra_config["guestinfo.userdata"],
+      extra_config["guestinfo.network"],
     ]
   }
 
