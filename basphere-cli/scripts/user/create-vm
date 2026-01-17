@@ -246,10 +246,6 @@ create_single_vm() {
     # vSphere VM 이름 (사용자 프리픽스 포함)
     local vsphere_vm_name="${user}-${vm_name}"
 
-    # OS 기본 사용자
-    local default_user
-    default_user=$(get_os_default_user "$os_type")
-
     # 메타데이터 생성
     cat > "$tf_dir/metadata.json" << EOF
 {
@@ -257,7 +253,7 @@ create_single_vm() {
     "vsphere_vm_name": "$vsphere_vm_name",
     "owner": "$user",
     "os": "$os_type",
-    "default_user": "$default_user",
+    "login_user": "$user",
     "spec": "$spec",
     "ip_address": "$ip_address",
     "created_at": "$(get_timestamp)",
@@ -452,9 +448,6 @@ main() {
     fi
 
     # 확인
-    local default_user
-    default_user=$(get_os_default_user "$os_type")
-
     echo ""
     echo "생성할 VM 정보:"
     echo "  - 이름: $vm_name"
@@ -497,7 +490,7 @@ main() {
     fi
     echo "=========================================="
     echo ""
-    echo "VM 접속: ssh $default_user@<IP_ADDRESS>"
+    echo "VM 접속: ssh $CURRENT_USER@<IP_ADDRESS>"
     echo "VM 목록: list-vms"
 }
 
