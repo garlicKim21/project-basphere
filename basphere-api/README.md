@@ -71,6 +71,7 @@ sudo systemctl start basphere-api
 | GET `/register` | 등록 폼 |
 | POST `/register` | 등록 폼 제출 |
 | GET `/success` | 등록 성공 페이지 |
+| GET `/ssh-guide` | SSH 키 생성 가이드 (macOS/Windows) |
 
 ### REST API
 

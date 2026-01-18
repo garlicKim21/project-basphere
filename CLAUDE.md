@@ -227,17 +227,31 @@ vsphere:
   network: "VM-Network"                   # VM 포트그룹 이름
   folder: "basphere-vms"                  # VM 폴더 이름
 
+# OS별 템플릿 설정
+# interface: OS에서 인식하는 네트워크 인터페이스 이름 (VMXNET3 기준)
 templates:
-  vm: "ubuntu-22.04-template"             # cloud-init 지원 VM 템플릿
+  os:
+    ubuntu-24.04:
+      template: "ubuntu-noble-24.04-cloudimg"
+      default_user: "ubuntu"
+      description: "Ubuntu 24.04 LTS (Noble)"
+      interface: "ens192"
+    rocky-10.1:
+      template: "rocky-10-template"
+      default_user: "rocky"
+      description: "Rocky Linux 10.1"
+      interface: "ens33"
 
 network:
   cidr: "10.254.0.0/21"                   # 사용자 VM용 IP 대역
   gateway: "10.254.0.1"                   # 게이트웨이
   netmask: "255.255.248.0"
+  prefix_length: 21
   mtu: 1500                               # 일반 네트워크는 1500, 오버레이는 1450
   dns:
     - "8.8.8.8"
     - "1.1.1.1"
+  block_size: 32                          # 사용자당 IP 개수
 ```
 
 #### /etc/basphere/vsphere.env
@@ -248,19 +262,35 @@ export VSPHERE_PASSWORD='your-password'
 export VSPHERE_ALLOW_UNVERIFIED_SSL='true'
 ```
 
-### 3. 설치 실행
+### 3. Go 설치 (API 서버 빌드용)
+
+```bash
+# Go 1.21+ 설치
+wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+
+# PATH 설정 (~/.bashrc 또는 ~/.profile에 추가)
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# 설치 확인
+go version
+```
+
+### 4. 설치 실행
 
 ```bash
 # CLI 설치 (의존성 자동 설치: jq, yq, terraform)
 cd /opt/basphere/basphere-cli
 sudo ./install.sh
 
-# API 서버 빌드 (Go 1.21+ 필요)
+# API 서버 빌드
 cd /opt/basphere/basphere-api
 make tidy && make build-linux
 ```
 
-### 4. VM 템플릿 준비
+### 5. VM 템플릿 준비
 
 vCenter에 다음 조건을 만족하는 VM 템플릿이 필요합니다.
 
@@ -301,7 +331,7 @@ sudo shutdown -h now
 - 네트워크 어댑터: VMXNET3
 - 파티션: Standard (LVM 미사용 권장)
 
-### 5. 환경별 체크리스트
+### 6. 환경별 체크리스트
 
 | 항목 | 홈랩 | 회사 |
 |------|------|------|
@@ -312,7 +342,7 @@ sudo shutdown -h now
 | MTU | 1450 (오버레이) | 1500 (일반) |
 | DNS | 8.8.8.8 | 회사 DNS |
 
-### 6. 설치 후 확인
+### 7. 설치 후 확인
 
 ```bash
 # CLI 동작 확인
