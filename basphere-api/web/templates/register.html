@@ -85,6 +85,16 @@
             border-radius: 3px;
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
         }
+        .help-link {
+            font-weight: normal;
+            font-size: 12px;
+            color: #4a90d9;
+            text-decoration: none;
+            margin-left: 8px;
+        }
+        .help-link:hover {
+            text-decoration: underline;
+        }
         .errors {
             background: #fff5f5;
             border: 1px solid #feb2b2;
@@ -169,13 +179,17 @@
             </div>
 
             <div class="form-group">
-                <label for="public_key">SSH 공개키 <span class="required">*</span></label>
+                <label for="public_key">
+                    SSH 공개키 <span class="required">*</span>
+                    <a href="/ssh-guide" target="_blank" class="help-link">SSH 키 만들기 가이드</a>
+                </label>
                 <textarea id="public_key" name="public_key"
                           placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@host"
                           required>{{if .Input}}{{.Input.PublicKey}}{{end}}</textarea>
                 <p class="hint">
-                    공개키 생성: <code>ssh-keygen -t ed25519</code><br>
-                    공개키 확인: <code>cat ~/.ssh/id_ed25519.pub</code>
+                    SSH 키가 없으신가요? 위 가이드를 참고하세요.<br>
+                    이미 키가 있다면: <code>cat ~/.ssh/id_ed25519.pub</code> (macOS/Linux) 또는<br>
+                    <code>type %USERPROFILE%\.ssh\id_ed25519.pub</code> (Windows)
                 </p>
             </div>
 

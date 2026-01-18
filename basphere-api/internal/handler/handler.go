@@ -57,6 +57,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/register", h.registerPage)
 	r.Post("/register", h.registerFormSubmit)
 	r.Get("/success", h.successPage)
+	r.Get("/ssh-guide", h.sshGuidePage)
 
 	// API routes (JSON)
 	r.Route("/api/v1", func(r chi.Router) {
@@ -126,6 +127,12 @@ func (h *Handler) successPage(w http.ResponseWriter, r *http.Request) {
 	if err := h.templates.ExecuteTemplate(w, "success.html", map[string]string{
 		"Username": username,
 	}); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) sshGuidePage(w http.ResponseWriter, r *http.Request) {
+	if err := h.templates.ExecuteTemplate(w, "ssh-guide.html", nil); err != nil {
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
 }

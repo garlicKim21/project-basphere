@@ -6,9 +6,36 @@
 
 ## 시작하기
 
-### 1. Bastion 서버 접속
+### 1. SSH 키 준비
 
-관리자로부터 받은 계정 정보로 Bastion 서버에 SSH 접속합니다.
+Basphere는 SSH 키 인증을 사용합니다. 등록 전에 SSH 키가 필요합니다.
+
+- [macOS SSH 키 가이드](ssh-guide-macos.md)
+- [Windows SSH 키 가이드](ssh-guide-windows.md)
+
+### 2. 계정 등록 요청
+
+웹 브라우저에서 등록 페이지에 접속하여 계정을 신청합니다.
+
+```
+http://<bastion-server>:8080/register
+```
+
+등록 폼에 입력할 정보:
+- **사용자 ID**: 원하는 계정명 (영문 소문자, 숫자, 하이픈)
+- **이메일**: 연락 가능한 이메일 주소
+- **소속 팀**: 소속 팀/부서명
+- **SSH 공개키**: 준비한 SSH 공개키 내용 (예: `ssh-ed25519 AAAA...`)
+
+> **공개키 확인 방법**: 터미널에서 `cat ~/.ssh/id_ed25519.pub` 실행
+
+### 3. 승인 대기
+
+등록 요청이 제출되면 관리자의 승인을 기다립니다. 승인이 완료되면 Bastion 서버에 접속할 수 있습니다.
+
+### 4. Bastion 서버 접속
+
+승인 후 SSH로 Bastion 서버에 접속합니다.
 
 ```bash
 ssh <your-username>@<bastion-server>
@@ -19,9 +46,9 @@ ssh <your-username>@<bastion-server>
 ssh kimht@bastion.company.local
 ```
 
-> **참고**: SSH 키 인증을 사용합니다. 관리자에게 공개키를 전달하여 계정을 생성받으세요.
+> **접속 오류 시**: [SSH 키 가이드](ssh-guide-macos.md)의 트러블슈팅 섹션을 참조하세요.
 
-### 2. 사용 가능한 명령어
+### 5. 사용 가능한 명령어
 
 | 명령어 | 설명 |
 |--------|------|

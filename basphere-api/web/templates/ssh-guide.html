@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basphere - SSH 키 가이드</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            min-height: 100vh;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .header p {
+            color: #666;
+            margin-top: 8px;
+        }
+        .os-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            justify-content: center;
+        }
+        .os-tab {
+            padding: 12px 24px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+            background: white;
+        }
+        .os-tab:hover {
+            border-color: #4a90d9;
+        }
+        .os-tab.active {
+            background: #4a90d9;
+            color: white;
+            border-color: #4a90d9;
+        }
+        .os-content {
+            display: none;
+        }
+        .os-content.active {
+            display: block;
+        }
+        h2 {
+            color: #333;
+            font-size: 18px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #4a90d9;
+        }
+        h3 {
+            color: #444;
+            font-size: 16px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #555;
+            margin-bottom: 12px;
+        }
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 12px 0;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+        }
+        code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+        }
+        .note {
+            background: #e8f4fd;
+            border-left: 4px solid #4a90d9;
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .note strong {
+            color: #2c5282;
+        }
+        .warning {
+            background: #fffbeb;
+            border-left: 4px solid #f59e0b;
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 6px 6px 0;
+        }
+        .copy-btn {
+            float: right;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .copy-btn:hover {
+            background: #3a7fc8;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 30px;
+            color: #4a90d9;
+            text-decoration: none;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+        ol, ul {
+            margin-left: 20px;
+            margin-bottom: 12px;
+        }
+        li {
+            margin-bottom: 8px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>SSH 키 가이드</h1>
+            <p>Basphere 등록을 위한 SSH 키 생성 방법</p>
+        </div>
+
+        <div class="os-tabs">
+            <button class="os-tab active" onclick="showOS('macos')">macOS</button>
+            <button class="os-tab" onclick="showOS('windows')">Windows</button>
+        </div>
+
+        <!-- macOS Guide -->
+        <div id="macos" class="os-content active">
+            <h2>1. 처음 SSH 키를 만드는 경우</h2>
+
+            <h3>1.1 터미널 열기</h3>
+            <p><code>Command + Space</code>를 눌러 Spotlight에서 "터미널" 검색 후 실행</p>
+
+            <h3>1.2 SSH 키 생성</h3>
+            <pre><code>ssh-keygen -t ed25519 -C "your-email@example.com"</code></pre>
+            <p>엔터를 누르면 기본 위치에 저장됩니다. 비밀번호는 선택사항입니다.</p>
+
+            <h3>1.3 공개키 확인 및 복사</h3>
+            <pre><code>cat ~/.ssh/id_ed25519.pub</code></pre>
+            <p>출력된 전체 내용을 복사하여 등록 폼에 붙여넣으세요.</p>
+
+            <div class="note">
+                <strong>클립보드에 바로 복사하려면:</strong>
+                <pre><code>cat ~/.ssh/id_ed25519.pub | pbcopy</code></pre>
+            </div>
+
+            <h2>2. 이미 SSH 키가 있는 경우</h2>
+            <p>기존 키가 있는지 확인:</p>
+            <pre><code>ls -la ~/.ssh/</code></pre>
+            <p><code>id_ed25519.pub</code> 또는 <code>id_rsa.pub</code> 파일이 있으면 기존 키를 사용할 수 있습니다.</p>
+            <pre><code>cat ~/.ssh/id_ed25519.pub</code></pre>
+
+            <h2>3. Basphere 전용 새 키 만들기</h2>
+            <p>기존 키를 유지하면서 별도 키를 만들고 싶은 경우:</p>
+            <pre><code>ssh-keygen -t ed25519 -C "basphere" -f ~/.ssh/id_basphere</code></pre>
+            <p>접속 시 키 지정:</p>
+            <pre><code>ssh -i ~/.ssh/id_basphere username@bastion-server</code></pre>
+
+            <h2>4. SSH Config 설정 (권장)</h2>
+            <p>매번 옵션을 입력하지 않고 간편하게 접속하려면:</p>
+            <pre><code>nano ~/.ssh/config</code></pre>
+            <p>다음 내용 추가:</p>
+            <pre><code># Basphere Bastion
+Host bastion
+    HostName bastion.company.local
+    User your-username
+    IdentityFile ~/.ssh/id_basphere
+
+# VM 접속 (Bastion 경유)
+Host 10.254.0.*
+    ProxyJump bastion
+    User ubuntu</code></pre>
+            <p>이후 간단히 접속:</p>
+            <pre><code>ssh bastion</code></pre>
+        </div>
+
+        <!-- Windows Guide -->
+        <div id="windows" class="os-content">
+            <h2>1. 처음 SSH 키를 만드는 경우</h2>
+
+            <h3>1.1 PowerShell 열기</h3>
+            <p><code>Windows + X</code> 누른 후 "Windows PowerShell" 또는 "터미널" 선택</p>
+
+            <h3>1.2 OpenSSH 확인</h3>
+            <pre><code>ssh -V</code></pre>
+            <p>명령어가 없으면 Windows 설정에서 "OpenSSH 클라이언트"를 설치하세요.</p>
+
+            <h3>1.3 SSH 키 생성</h3>
+            <pre><code>ssh-keygen -t ed25519 -C "your-email@example.com"</code></pre>
+            <p>엔터를 누르면 기본 위치에 저장됩니다. 비밀번호는 선택사항입니다.</p>
+
+            <h3>1.4 공개키 확인 및 복사</h3>
+            <pre><code>Get-Content ~/.ssh/id_ed25519.pub</code></pre>
+            <p>또는:</p>
+            <pre><code>type %USERPROFILE%\.ssh\id_ed25519.pub</code></pre>
+            <p>출력된 전체 내용을 복사하여 등록 폼에 붙여넣으세요.</p>
+
+            <div class="note">
+                <strong>클립보드에 바로 복사하려면:</strong>
+                <pre><code>Get-Content ~/.ssh/id_ed25519.pub | Set-Clipboard</code></pre>
+            </div>
+
+            <h2>2. 이미 SSH 키가 있는 경우</h2>
+            <p>기존 키가 있는지 확인:</p>
+            <pre><code>dir ~/.ssh/</code></pre>
+            <p><code>id_ed25519.pub</code> 또는 <code>id_rsa.pub</code> 파일이 있으면 기존 키를 사용할 수 있습니다.</p>
+            <pre><code>Get-Content ~/.ssh/id_ed25519.pub</code></pre>
+
+            <h2>3. Basphere 전용 새 키 만들기</h2>
+            <p>기존 키를 유지하면서 별도 키를 만들고 싶은 경우:</p>
+            <pre><code>ssh-keygen -t ed25519 -C "basphere" -f $env:USERPROFILE\.ssh\id_basphere</code></pre>
+            <p>접속 시 키 지정:</p>
+            <pre><code>ssh -i ~/.ssh/id_basphere username@bastion-server</code></pre>
+
+            <h2>4. SSH Config 설정 (권장)</h2>
+            <p>매번 옵션을 입력하지 않고 간편하게 접속하려면:</p>
+            <pre><code>notepad $env:USERPROFILE\.ssh\config</code></pre>
+            <p>다음 내용 추가:</p>
+            <pre><code># Basphere Bastion
+Host bastion
+    HostName bastion.company.local
+    User your-username
+    IdentityFile ~/.ssh/id_basphere
+
+# VM 접속 (Bastion 경유)
+Host 10.254.0.*
+    ProxyJump bastion
+    User ubuntu</code></pre>
+            <p>이후 간단히 접속:</p>
+            <pre><code>ssh bastion</code></pre>
+
+            <h2>Git Bash 사용 (대안)</h2>
+            <p>Git for Windows가 설치되어 있다면 Git Bash에서 macOS와 동일한 명령어를 사용할 수 있습니다.</p>
+        </div>
+
+        <a href="/register" class="back-link">&larr; 등록 페이지로 돌아가기</a>
+    </div>
+
+    <script>
+        function showOS(os) {
+            // Hide all content
+            document.querySelectorAll('.os-content').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.os-tab').forEach(el => {
+                el.classList.remove('active');
+            });
+
+            // Show selected
+            document.getElementById(os).classList.add('active');
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
