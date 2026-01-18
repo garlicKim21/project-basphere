@@ -7,24 +7,35 @@ vsphere:
   datacenter: "DC1"                       # 데이터센터 이름
   cluster: "Cluster1"                     # 클러스터 이름
   datastore: "datastore1"                 # 데이터스토어 이름
-  resource_pool: "/DC1/host/Cluster1/Resources"  # 리소스 풀 경로
+  resource_pool: ""                       # 리소스 풀 경로 (비워두면 클러스터 기본 풀 사용)
   network: "VM Network"                   # VM 네트워크 (포트그룹 이름)
   folder: "basphere-vms"                  # VM 폴더 (없으면 자동 생성)
 
 # VM 템플릿 설정
+# OS별 템플릿 설정 (cloud-init + open-vm-tools 포함 필수)
+# interface: OS에서 인식하는 네트워크 인터페이스 이름 (VMXNET3 기준)
+#   - Ubuntu: ens192
+#   - Rocky/RHEL: ens33 또는 ens192 (템플릿 설정에 따라 다름)
 templates:
-  # OS별 템플릿 설정 (cloud-init + open-vm-tools 포함 필수)
   os:
     ubuntu-24.04:
-      template: "ubuntu-noble-24.04-cloudimg"    # vSphere 템플릿 이름
-      default_user: "ubuntu"                      # cloud-init 기본 사용자
+      template: "ubuntu-noble-24.04-cloudimg"
+      default_user: "ubuntu"
       description: "Ubuntu 24.04 LTS (Noble)"
-    rocky-10:
-      template: "rocky-linux-10.1-cloudimg"      # vSphere 템플릿 이름
-      default_user: "rocky"                       # cloud-init 기본 사용자
+      interface: "ens192"
+    rocky-10.1:
+      template: "rocky-10-template"
+      default_user: "rocky"
       description: "Rocky Linux 10.1"
+      interface: "ens33"
+    # 다른 OS 추가 예시:
+    # ubuntu-22.04:
+    #   template: "ubuntu-jammy-22.04-cloudimg"
+    #   default_user: "ubuntu"
+    #   description: "Ubuntu 22.04 LTS (Jammy)"
+    #   interface: "ens192"
 
-# 네트워크 설정 (Dev Network)
+# 네트워크 설정
 network:
   cidr: "10.254.0.0/21"                   # 전체 네트워크 대역
   gateway: "10.254.0.1"                   # 게이트웨이

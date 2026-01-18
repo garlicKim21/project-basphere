@@ -70,7 +70,8 @@ project-basphere/
 | Datastore | 01-VM-Block |
 | VM Network | 99-basphere-cli |
 | VM Folder | basphere-cli |
-| VM Template | ubuntu-jammy-22.04-cloudimg |
+| Ubuntu 템플릿 | ubuntu-noble-24.04-cloudimg |
+| Rocky 템플릿 | rocky-10-template |
 
 ### 네트워크 설정
 | 항목 | 값 |
@@ -146,7 +147,9 @@ list-vms
 delete-vm test
 ```
 
-## 현재 완료된 기능 (Stage 1.5)
+## MVP 완료 (2026-01-18)
+
+### 완료된 기능
 
 - [x] 사용자 관리 (생성/삭제)
 - [x] 웹 기반 사용자 등록 요청
@@ -155,10 +158,31 @@ delete-vm test
 - [x] IP 자동 할당 (IPAM)
 - [x] MTU 설정 지원
 - [x] 의존성 자동 설치
+- [x] 다중 OS 지원 (Ubuntu 24.04, Rocky Linux 10.1)
+- [x] OS별 네트워크 인터페이스 자동 설정
+- [x] 디스크 자동 확장 (growpart)
+- [x] 5단계 VM 스펙 (tiny, small, medium, large, huge)
+
+### VM 스펙
+
+| 스펙 | vCPU | RAM | Disk | 용도 |
+|------|------|-----|------|------|
+| tiny | 2 | 4GB | 50GB | 테스트용 |
+| small | 2 | 8GB | 50GB | 개발용 |
+| medium | 4 | 16GB | 100GB | 일반 워크로드 |
+| large | 8 | 32GB | 200GB | 고성능 워크로드 |
+| huge | 16 | 64GB | 200GB | 대규모 워크로드 |
+
+### 지원 OS
+
+| OS | 템플릿 | 인터페이스 |
+|----|--------|-----------|
+| Ubuntu 24.04 LTS | ubuntu-noble-24.04-cloudimg | ens192 |
+| Rocky Linux 10.1 | rocky-10-template | ens33 |
 
 ## 다음 계획
 
-- [ ] IDP 구축 (6개월 내)
+- [ ] IDP 구축
 - [ ] Kubernetes 클러스터 프로비저닝 (Stage 2)
 - [ ] 웹 대시보드
 
@@ -238,10 +262,44 @@ make tidy && make build-linux
 
 ### 4. VM 템플릿 준비
 
-vCenter에 다음 조건을 만족하는 VM 템플릿이 필요합니다:
-- Ubuntu 22.04 LTS (cloud-init 포함)
-- open-vm-tools 설치됨
-- cloud-init datasource: OVF 활성화
+vCenter에 다음 조건을 만족하는 VM 템플릿이 필요합니다.
+
+#### Ubuntu 템플릿 (Cloud Image 사용)
+```bash
+# Ubuntu Cloud Image 다운로드 (OVA 형식)
+# https://cloud-images.ubuntu.com/noble/current/
+# noble-server-cloudimg-amd64.ova 다운로드 후 vSphere에 배포
+```
+
+#### Rocky Linux 템플릿 (ISO 설치)
+```bash
+# 1. Rocky Linux ISO로 VM 생성 및 설치
+#    - 파티션: Standard (LVM 사용 안 함) - growpart 자동 확장을 위해
+#    - 네트워크 어댑터: VMXNET3
+
+# 2. 필수 패키지 설치
+sudo dnf install -y cloud-init open-vm-tools cloud-utils-growpart
+sudo systemctl enable cloud-init cloud-init-local cloud-config cloud-final vmtoolsd
+
+# 3. 템플릿 준비 (sysprep)
+sudo truncate -s 0 /etc/machine-id
+sudo rm -f /etc/ssh/ssh_host_*
+sudo cloud-init clean
+sudo passwd -l root
+# 설치 시 만든 임시 사용자 삭제
+sudo userdel -r <임시사용자>
+history -c
+sudo shutdown -h now
+
+# 4. vSphere에서 VM을 템플릿으로 변환
+```
+
+#### 템플릿 요구사항
+- cloud-init 설치 및 활성화
+- open-vm-tools 설치
+- cloud-utils-growpart 설치 (디스크 자동 확장)
+- 네트워크 어댑터: VMXNET3
+- 파티션: Standard (LVM 미사용 권장)
 
 ### 5. 환경별 체크리스트
 
