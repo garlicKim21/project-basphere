@@ -1,2 +1,5 @@
 .DS_Store
 node_modules/
+
+# 개발 도구 (Claude Code MCP 서버 등)
+tools/
