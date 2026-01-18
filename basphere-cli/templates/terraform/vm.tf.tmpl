@@ -154,6 +154,12 @@ variable "mtu" {
   default     = ${MTU}
 }
 
+variable "interface" {
+  description = "Network interface name (OS-specific)"
+  type        = string
+  default     = "${INTERFACE}"
+}
+
 # ============================================
 # Data Sources
 # ============================================
@@ -190,31 +196,23 @@ locals {
   # VM이 생성될 폴더 경로 (폴더는 사용자 생성 시 이미 만들어짐)
   vm_folder_path = "${var.base_folder}/${var.owner}"
 
-  # cloud-init network configuration (v2) - metadata 안에 포함됨
-  network_config = {
-    version = 2
-    ethernets = {
-      ens192 = {
-        dhcp4 = false
-        mtu   = var.mtu
-        addresses = [
-          "${var.ip_address}/${NETWORK_PREFIX}"
-        ]
-        gateway4 = var.gateway
-        nameservers = {
-          addresses = var.dns_servers
-        }
-      }
-    }
-  }
-
-  # cloud-init metadata (network configuration 포함)
-  # Ubuntu 24.04+ cloud-init은 network 설정이 metadata 안에 있어야 함
-  metadata = yamlencode({
-    "local-hostname" = var.vm_name
-    "instance-id"    = var.vsphere_vm_name
-    "network"        = local.network_config
-  })
+  # cloud-init metadata with network configuration
+  # 인터페이스 이름은 OS별로 다름 (Ubuntu: ens192, Rocky: ens33)
+  metadata = <<-META
+    instance-id: ${var.vsphere_vm_name}
+    local-hostname: ${var.vm_name}
+    network:
+      version: 2
+      ethernets:
+        ${var.interface}:
+          dhcp4: false
+          mtu: ${var.mtu}
+          addresses:
+            - ${var.ip_address}/${NETWORK_PREFIX}
+          gateway4: ${var.gateway}
+          nameservers:
+            addresses: ${jsonencode(var.dns_servers)}
+  META
 
   # cloud-init userdata
   # hostname은 짧은 이름 사용
@@ -230,26 +228,11 @@ locals {
           - ${var.ssh_public_key}
     package_update: false
     package_upgrade: false
-    write_files:
-      - path: /etc/netplan/50-basphere.yaml
-        permissions: '0600'
-        content: |
-          network:
-            version: 2
-            ethernets:
-              ens192:
-                dhcp4: false
-                mtu: ${var.mtu}
-                addresses:
-                  - ${var.ip_address}/${NETWORK_PREFIX}
-                routes:
-                  - to: default
-                    via: ${var.gateway}
-                nameservers:
-                  addresses: ${jsonencode(var.dns_servers)}
+    growpart:
+      mode: auto
+      devices: ['/']
+      ignore_growroot_disabled: false
     runcmd:
-      - rm -f /etc/netplan/50-cloud-init.yaml
-      - netplan apply
       - echo "Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized" > /var/log/basphere-init.log
       - echo "Owner: ${var.owner}" >> /var/log/basphere-init.log
       - echo "IP: ${var.ip_address}" >> /var/log/basphere-init.log

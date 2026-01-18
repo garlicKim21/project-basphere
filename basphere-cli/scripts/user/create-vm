@@ -91,6 +91,18 @@ get_os_default_user() {
     fi
 }
 
+# OS 네트워크 인터페이스 이름 가져오기
+get_os_interface() {
+    local os="$1"
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].interface" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "ens192"  # 기본값
+    else
+        echo "$value"
+    fi
+}
+
 # OS 유효성 검사
 validate_os() {
     local os="$1"
@@ -167,6 +179,8 @@ generate_terraform_file() {
     # OS별 설정
     template=$(get_os_template "$os_type")
     default_user=$(get_os_default_user "$os_type")
+    local interface
+    interface=$(get_os_interface "$os_type")
 
     # 네트워크 설정
     local gateway netmask dns_servers network_prefix mtu
@@ -210,6 +224,7 @@ generate_terraform_file() {
         -e "s|\${VM_FOLDER}|$vm_folder|g" \
         -e "s|\${TEMPLATE}|$template|g" \
         -e "s|\${DEFAULT_USER}|$default_user|g" \
+        -e "s|\${INTERFACE}|$interface|g" \
         -e "s|\${NUM_CPUS}|$num_cpus|g" \
         -e "s|\${MEMORY_MB}|$memory_mb|g" \
         -e "s|\${DISK_GB}|$disk_gb|g" \
