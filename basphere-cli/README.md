@@ -26,10 +26,31 @@ IDP(포털) 구축 전 단계에서 개발자가 Bastion 서버에 SSH 접속하
 
 | Stage | 기능 | 상태 |
 |-------|------|------|
-| Stage 1 | 사용자 계정 관리 | ✅ 완료 |
-| Stage 1 | IP 자동 할당 (경량 IPAM) | ✅ 완료 |
-| Stage 1 | VM 생성/조회/삭제 (Terraform) | ✅ 완료 |
+| MVP | 사용자 계정 관리 | ✅ 완료 |
+| MVP | 웹 기반 사용자 등록 요청 | ✅ 완료 |
+| MVP | 관리자 승인/거부 | ✅ 완료 |
+| MVP | IP 자동 할당 (경량 IPAM) | ✅ 완료 |
+| MVP | VM 생성/조회/삭제 (Terraform) | ✅ 완료 |
+| MVP | 다중 OS 지원 (Ubuntu, Rocky Linux) | ✅ 완료 |
+| MVP | 디스크 자동 확장 | ✅ 완료 |
 | Stage 2 | Kubernetes 클러스터 생성 (Cluster API) | 🚧 예정 |
+
+### 지원 OS
+
+| OS | 설명 | 네트워크 인터페이스 |
+|----|------|-------------------|
+| Ubuntu 24.04 LTS | Ubuntu Cloud Image 기반 | ens192 |
+| Rocky Linux 10.1 | ISO 설치 기반 | ens33 |
+
+### VM 스펙
+
+| 스펙 | vCPU | RAM | Disk | 용도 |
+|------|------|-----|------|------|
+| tiny | 2 | 4GB | 50GB | 테스트용 |
+| small | 2 | 8GB | 50GB | 개발용 |
+| medium | 4 | 16GB | 100GB | 일반 워크로드 |
+| large | 8 | 32GB | 200GB | 고성능 워크로드 |
+| huge | 16 | 64GB | 200GB | 대규모 워크로드 |
 
 ---
 
@@ -61,22 +82,55 @@ sudo apt update && sudo apt install terraform
 
 #### vSphere 환경
 - vCenter 6.7+ 또는 vSphere 7.0+
-- VM 템플릿: Ubuntu Cloud Image OVA
-  - 다운로드: https://cloud-images.ubuntu.com/jammy/current/
-  - 파일: `jammy-server-cloudimg-amd64.ova`
+- VM 템플릿: cloud-init 지원 필수
 - VM이 배치될 폴더 (예: `basphere-vms`)
 - 네트워크 (포트그룹)
 - 데이터스토어
 
 ### 2. VM 템플릿 준비
 
-vCenter에서 Ubuntu Cloud Image OVA를 템플릿으로 등록:
+#### Ubuntu 템플릿 (Cloud Image 사용)
 
-1. vCenter Web Client 접속
-2. **Actions** → **Deploy OVF Template**
-3. OVA 파일 선택 및 배포
-4. 배포된 VM을 **템플릿으로 변환** (우클릭 → Convert to Template)
-5. 템플릿 이름 기록 (예: `ubuntu-jammy-22.04-cloudimg`)
+1. Ubuntu Cloud Image 다운로드
+   - URL: https://cloud-images.ubuntu.com/noble/current/
+   - 파일: `noble-server-cloudimg-amd64.ova`
+
+2. vCenter에서 OVA 배포
+   - **Actions** → **Deploy OVF Template**
+   - OVA 파일 선택 및 배포
+   - 네트워크 어댑터: **VMXNET3** 확인
+
+3. 템플릿으로 변환
+   - 배포된 VM 우클릭 → **Convert to Template**
+   - 템플릿 이름: `ubuntu-noble-24.04-cloudimg`
+
+#### Rocky Linux 템플릿 (ISO 설치)
+
+1. Rocky Linux ISO로 VM 생성 및 설치
+   - 파티션: **Standard** (LVM 사용 안 함) - growpart 자동 확장을 위해
+   - 네트워크 어댑터: **VMXNET3**
+
+2. 필수 패키지 설치
+   ```bash
+   sudo dnf install -y cloud-init open-vm-tools cloud-utils-growpart
+   sudo systemctl enable cloud-init cloud-init-local cloud-config cloud-final vmtoolsd
+   ```
+
+3. 템플릿 준비 (sysprep)
+   ```bash
+   sudo truncate -s 0 /etc/machine-id
+   sudo rm -f /etc/ssh/ssh_host_*
+   sudo cloud-init clean
+   sudo passwd -l root
+   # 설치 시 만든 임시 사용자 삭제 (콘솔에서 실행)
+   sudo userdel -r <임시사용자>
+   history -c
+   sudo shutdown -h now
+   ```
+
+4. 템플릿으로 변환
+   - VM 우클릭 → **Convert to Template**
+   - 템플릿 이름: `rocky-10-template`
 
 ### 3. Basphere CLI 설치
 
@@ -116,8 +170,20 @@ vsphere:
   resource_pool: ""                      # 리소스풀 (비워두면 클러스터 기본값)
   folder: "basphere-vms"                 # VM 폴더
 
+# OS별 템플릿 설정
+# interface: OS에서 인식하는 네트워크 인터페이스 이름
 templates:
-  vm: "ubuntu-jammy-22.04-cloudimg"      # VM 템플릿 이름
+  os:
+    ubuntu-24.04:
+      template: "ubuntu-noble-24.04-cloudimg"
+      default_user: "ubuntu"
+      description: "Ubuntu 24.04 LTS (Noble)"
+      interface: "ens192"
+    rocky-10.1:
+      template: "rocky-10-template"
+      default_user: "rocky"
+      description: "Rocky Linux 10.1"
+      interface: "ens33"
 
 network:
   cidr: "10.254.0.0/21"                  # VM에 할당할 IP 대역
@@ -127,6 +193,7 @@ network:
     - "1.1.1.1"
   netmask: "255.255.248.0"               # 서브넷 마스크
   prefix_length: 21                       # CIDR prefix
+  mtu: 1500                               # MTU (오버레이 네트워크는 1450)
   block_size: 32                          # 사용자당 IP 개수
 
 quotas:
@@ -146,25 +213,41 @@ VSPHERE_USER="administrator@vsphere.local"
 VSPHERE_PASSWORD="your-password"
 ```
 
-#### VM 스펙 정의 (선택)
+#### VM 스펙 정의
 ```bash
 sudo vim /etc/basphere/specs.yaml
 ```
 
 ```yaml
 vm_specs:
-  small:
+  tiny:
+    description: "초소형 VM (테스트용)"
     cpu: 2
-    memory_mb: 4096
+    memory_mb: 4096      # 4GB
+    disk_gb: 50
+  small:
+    description: "소형 VM (개발용)"
+    cpu: 2
+    memory_mb: 8192      # 8GB
     disk_gb: 50
   medium:
+    description: "중형 VM (일반 워크로드)"
     cpu: 4
-    memory_mb: 8192
+    memory_mb: 16384     # 16GB
     disk_gb: 100
   large:
+    description: "대형 VM (고성능 워크로드)"
     cpu: 8
-    memory_mb: 16384
+    memory_mb: 32768     # 32GB
     disk_gb: 200
+  huge:
+    description: "초대형 VM (대규모 워크로드)"
+    cpu: 16
+    memory_mb: 65536     # 64GB
+    disk_gb: 200
+
+defaults:
+  vm_spec: "small"
 ```
 
 ### 5. 관리자 설정
@@ -205,6 +288,29 @@ sudo basphere-admin user add <username> --pubkey /path/to/id_ed25519.pub
 4. IP 블록 자동 할당
 5. 사용자 데이터 디렉토리 생성
 
+### 사용자 등록 요청 (웹 기반)
+
+basphere-api 서버 실행 시 웹 폼을 통한 등록 요청 가능:
+```bash
+# API 서버 실행
+sudo /opt/basphere/basphere-api/build/basphere-api-linux-amd64 --dev
+
+# 등록 폼: http://<bastion-ip>:8080/register
+```
+
+### 대기 중인 사용자 확인 및 승인
+
+```bash
+# 대기 목록
+sudo basphere-admin user pending
+
+# 승인
+sudo basphere-admin user approve <username>
+
+# 거부
+sudo basphere-admin user reject <username>
+```
+
 ### 사용자 목록
 
 ```bash
@@ -222,6 +328,46 @@ sudo basphere-admin user show <username>
 ```bash
 # VM이 있으면 먼저 삭제해야 함
 sudo basphere-admin user delete <username>
+```
+
+---
+
+## VM 사용 (사용자용)
+
+### VM 생성
+
+```bash
+# 대화형 모드
+create-vm
+
+# 명령행 모드
+create-vm -n my-server -o ubuntu-24.04 -s small
+create-vm -n db-server -o rocky-10.1 -s medium
+
+# 여러 대 생성
+create-vm -n web -o ubuntu-24.04 -s tiny -c 3
+```
+
+### VM 목록
+
+```bash
+list-vms
+list-vms -a        # 상세 정보
+list-vms -j        # JSON 출력
+```
+
+### VM 삭제
+
+```bash
+delete-vm my-server
+delete-vm my-server -f    # 확인 없이 삭제
+```
+
+### 리소스 확인
+
+```bash
+show-quota         # 할당량 확인
+list-resources     # 리소스 목록
 ```
 
 ---
@@ -319,27 +465,31 @@ basphere-cli/
 sudo /path/to/basphere-cli/install.sh
 ```
 
-또는 수동으로:
-```bash
-sudo chmod 755 /var/lib/basphere /var/lib/basphere/users /var/lib/basphere/terraform
-sudo chmod 777 /var/lib/basphere/ipam /var/log/basphere
-sudo chmod 666 /var/lib/basphere/ipam/.lock /var/lib/basphere/ipam/leases.tsv
-sudo chmod 644 /var/lib/basphere/ipam/allocations.tsv
-sudo chmod 644 /etc/basphere/config.yaml /etc/basphere/specs.yaml /etc/basphere/vsphere.env
-```
-
 ### Terraform 오류
 
 #### "network not found"
 - `config.yaml`의 `network` 값이 vCenter의 포트그룹 이름과 일치하는지 확인
 
 #### "template not found"
-- `config.yaml`의 `templates.vm` 값이 vCenter의 템플릿 이름과 일치하는지 확인
+- `config.yaml`의 `templates.os.<os>.template` 값이 vCenter의 템플릿 이름과 일치하는지 확인
 - 템플릿이 지정된 데이터센터에 있는지 확인
 
-#### "CDROM device required"
-- VM 템플릿이 vApp 속성을 사용하는 경우 발생
-- `vm.tf.tmpl`에 `cdrom { client_device = true }` 블록 확인
+### cloud-init 네트워크 설정 문제
+
+#### Ubuntu 24.04
+- 네트워크 설정은 `guestinfo.metadata` 안에 `network` 키로 포함해야 함
+- 별도의 `guestinfo.network`는 작동하지 않음
+
+#### Rocky Linux
+- 네트워크 인터페이스 이름이 Ubuntu와 다름 (ens33 vs ens192)
+- `config.yaml`의 `interface` 설정 확인
+
+### 디스크 확장 안 됨
+
+Rocky Linux 템플릿에 `cloud-utils-growpart` 설치 필요:
+```bash
+sudo dnf install -y cloud-utils-growpart
+```
 
 ### IP 할당 실패
 
