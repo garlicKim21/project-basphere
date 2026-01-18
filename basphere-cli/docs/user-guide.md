@@ -47,17 +47,25 @@ create-vm
 
 ? VM 이름: my-dev-server
 
+? OS 선택
+  [1] ubuntu-24.04 - Ubuntu 24.04 LTS (Noble)
+  [2] rocky-10.1 - Rocky Linux 10.1
+? 선택 [1-2]: 1
+
 ? 스펙 선택
-  [1] small - 2 vCPU, 4GB RAM, 50GB Disk
-  [2] medium - 4 vCPU, 8GB RAM, 100GB Disk
-  [3] large - 8 vCPU, 16GB RAM, 200GB Disk
-? 선택 [1-3]: 1
+  [1] tiny - 2 vCPU, 4GB RAM, 50GB Disk
+  [2] small - 2 vCPU, 8GB RAM, 50GB Disk
+  [3] medium - 4 vCPU, 16GB RAM, 100GB Disk
+  [4] large - 8 vCPU, 32GB RAM, 200GB Disk
+  [5] huge - 16 vCPU, 64GB RAM, 200GB Disk
+? 선택 [1-5]: 2
 
 ? 생성할 VM 대수 [1]: 1
 
 생성할 VM 정보:
   - 이름: my-dev-server
-  - 스펙: small (2 vCPU, 4GB RAM, 50GB Disk)
+  - OS: ubuntu-24.04
+  - 스펙: small (2 vCPU, 8GB RAM, 50GB Disk)
   - 대수: 1
 
 ? VM을 생성하시겠습니까? [Y/n]: Y
@@ -73,8 +81,11 @@ create-vm
 미리 옵션을 지정하여 빠르게 생성:
 
 ```bash
-# 단일 VM 생성
+# 단일 VM 생성 (Ubuntu 기본)
 create-vm -n my-server -s small
+
+# OS 지정하여 생성
+create-vm -n rocky-server -s small -o rocky-10.1
 
 # 여러 VM 생성
 create-vm -n web-server -s medium -c 3
@@ -82,7 +93,8 @@ create-vm -n web-server -s medium -c 3
 
 옵션:
 - `-n, --name <name>`: VM 이름
-- `-s, --spec <spec>`: 스펙 (small, medium, large)
+- `-s, --spec <spec>`: 스펙 (tiny, small, medium, large, huge)
+- `-o, --os <os>`: OS 선택 (ubuntu-24.04, rocky-10.1) - 기본값: ubuntu-24.04
 - `-c, --count <count>`: 생성할 VM 수 (기본값: 1)
 
 > **VM 이름 규칙**
@@ -242,15 +254,20 @@ show-quota -j
 VM이 생성되면 SSH로 접속할 수 있습니다.
 
 ```bash
+# Ubuntu VM
 ssh ubuntu@<vm-ip>
+
+# Rocky Linux VM
+ssh rocky@<vm-ip>
 ```
 
 예시:
 ```bash
 ssh ubuntu@10.254.0.32
+ssh rocky@10.254.0.33
 ```
 
-> **기본 사용자**: `ubuntu`
+> **기본 사용자**: OS에 따라 다름 (`ubuntu` 또는 `rocky`)
 > **인증 방식**: Bastion에 등록된 SSH 키와 동일한 키 사용
 
 ### Bastion을 통한 접속 (ProxyJump)
@@ -289,9 +306,18 @@ ssh 10.254.0.32
 
 | 스펙 | vCPU | 메모리 | 디스크 | 용도 |
 |------|------|--------|--------|------|
-| small | 2 | 4GB | 50GB | 개발/테스트 |
-| medium | 4 | 8GB | 100GB | 일반 애플리케이션 |
-| large | 8 | 16GB | 200GB | 고성능 워크로드 |
+| tiny | 2 | 4GB | 50GB | 테스트용 |
+| small | 2 | 8GB | 50GB | 개발용 |
+| medium | 4 | 16GB | 100GB | 일반 워크로드 |
+| large | 8 | 32GB | 200GB | 고성능 워크로드 |
+| huge | 16 | 64GB | 200GB | 대규모 워크로드 |
+
+## 지원 OS
+
+| OS | 옵션값 | 기본 사용자 |
+|----|--------|------------|
+| Ubuntu 24.04 LTS | `ubuntu-24.04` | `ubuntu` |
+| Rocky Linux 10.1 | `rocky-10.1` | `rocky` |
 
 ---
 
