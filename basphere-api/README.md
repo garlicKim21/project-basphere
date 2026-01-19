@@ -145,6 +145,42 @@ curl -X DELETE -H "X-Basphere-User: hong" http://localhost:8080/api/v1/vms/my-vm
 curl -H "X-Basphere-User: hong" http://localhost:8080/api/v1/quota
 ```
 
+## 보안 아키텍처
+
+### vSphere 인증 정보 보호
+
+API 서버는 vSphere 인증 정보(`/etc/basphere/vsphere.env`)를 보호하기 위해 설계되었습니다.
+
+```
+┌─────────────┐     HTTP      ┌─────────────┐    Terraform    ┌─────────────┐
+│    CLI      │──────────────▶│  API Server │────────────────▶│   vSphere   │
+│  (사용자)   │               │   (root)    │                 │  (vCenter)  │
+└─────────────┘               └──────┬──────┘                 └─────────────┘
+                                     │
+                                     ▼
+                              vsphere.env
+                              (600, root만 읽기)
+```
+
+**보안 설정**:
+```bash
+# vsphere.env 권한 설정
+sudo chmod 600 /etc/basphere/vsphere.env
+sudo chown root:root /etc/basphere/vsphere.env
+```
+
+### 동작 방식
+
+1. 사용자가 CLI 명령어 실행 (예: `create-vm`)
+2. CLI가 API 서버에 HTTP 요청 전송 (`X-Basphere-User` 헤더로 사용자 식별)
+3. API 서버가 Terraform 작업 수행 (root 권한으로 vsphere.env 접근)
+4. 결과를 CLI에 반환
+
+이 아키텍처를 통해:
+- 일반 사용자는 vSphere 인증 정보에 접근 불가
+- Terraform 작업은 중앙에서 관리
+- 감사 로깅 용이
+
 ## 설정
 
 `/etc/basphere/api.yaml`:

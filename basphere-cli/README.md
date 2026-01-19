@@ -9,18 +9,32 @@ IDP(포털) 구축 전 단계에서 개발자가 Bastion 서버에 SSH 접속하
 ### 아키텍처
 
 ```
-┌─────────────┐     SSH      ┌─────────────┐   Terraform   ┌─────────────┐
-│  Developer  │ ──────────▶  │   Bastion   │ ───────────▶  │   vCenter   │
+┌─────────────┐     SSH      ┌─────────────┐               ┌─────────────┐
+│  Developer  │ ──────────▶  │   Bastion   │               │   vCenter   │
 │  Workstation│              │   Server    │               │   (vSphere) │
-└─────────────┘              └─────────────┘               └─────────────┘
-                                   │
-                                   │ IPAM, User Management
-                                   ▼
+└─────────────┘              └──────┬──────┘               └─────────────┘
+                                    │                             ▲
+                            CLI     │                             │
+                          (HTTP)    ▼                             │
+                             ┌─────────────┐    Terraform   ──────┘
+                             │ API Server  │
+                             │ (basphere-  │
+                             │     api)    │
+                             └──────┬──────┘
+                                    │
+                                    │ IPAM, User Management
+                                    ▼
                              ┌─────────────┐
                              │  /var/lib/  │
                              │  basphere/  │
                              └─────────────┘
 ```
+
+**보안 아키텍처**:
+- CLI 명령어(create-vm, list-vms 등)는 API 서버를 통해 실행
+- vSphere 인증 정보(`/etc/basphere/vsphere.env`)는 root만 읽기 가능 (600 권한)
+- API 서버는 root 권한으로 실행되어 Terraform 작업 수행
+- 일반 사용자는 vSphere 인증 정보에 직접 접근 불가
 
 ### 기능
 
@@ -213,6 +227,14 @@ VSPHERE_USER="administrator@vsphere.local"
 VSPHERE_PASSWORD="your-password"
 ```
 
+**보안 설정**: 인증 정보 보호를 위해 반드시 600 권한 설정
+```bash
+sudo chmod 600 /etc/basphere/vsphere.env
+sudo chown root:root /etc/basphere/vsphere.env
+```
+
+> ⚠️ **중요**: `vsphere.env`는 root만 읽을 수 있어야 합니다. API 서버가 root 권한으로 실행되어 Terraform 작업을 수행하므로 일반 사용자는 접근할 필요가 없습니다.
+
 #### VM 스펙 정의
 ```bash
 sudo vim /etc/basphere/specs.yaml
@@ -260,7 +282,51 @@ sudo usermod -aG basphere-admin $(whoami)
 exit
 ```
 
-### 6. 설치 확인
+### 6. API 서버 설정
+
+CLI 명령어가 작동하려면 API 서버가 실행 중이어야 합니다.
+
+#### API 서버 설치
+
+```bash
+# basphere-api 빌드 (Go 1.21+ 필요)
+cd /opt/basphere/basphere-api
+make tidy
+make build-linux
+
+# systemd 서비스 등록
+sudo cp basphere-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable basphere-api
+sudo systemctl start basphere-api
+```
+
+#### API 설정 파일
+
+`/etc/basphere/api.yaml`:
+```yaml
+server:
+  host: "127.0.0.1"
+  port: 8080
+
+storage:
+  pending_dir: "/var/lib/basphere/pending"
+
+provisioner:
+  admin_script: "/usr/local/bin/basphere-admin"
+```
+
+#### API 서버 상태 확인
+
+```bash
+# 서비스 상태
+sudo systemctl status basphere-api
+
+# 헬스 체크
+curl http://localhost:8080/health
+```
+
+### 7. 설치 확인
 
 ```bash
 # 관리자 CLI 확인
@@ -268,6 +334,9 @@ sudo basphere-admin --help
 
 # 사용자 CLI 확인 (경로)
 which create-vm list-vms delete-vm show-quota list-resources
+
+# API 연결 확인 (사용자로 테스트)
+curl http://localhost:8080/health
 ```
 
 ---
@@ -456,6 +525,21 @@ basphere-cli/
 ---
 
 ## 트러블슈팅
+
+### API 서버 연결 실패
+
+CLI 명령어 실행 시 "API 서버에 연결할 수 없습니다" 오류 발생:
+
+```bash
+# API 서버 상태 확인
+sudo systemctl status basphere-api
+
+# API 서버 재시작
+sudo systemctl restart basphere-api
+
+# 로그 확인
+sudo journalctl -u basphere-api -f
+```
 
 ### Permission denied 오류
 

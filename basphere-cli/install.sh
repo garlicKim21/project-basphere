@@ -378,8 +378,9 @@ set_permissions() {
     chmod 755 /etc/basphere
     chmod 644 /etc/basphere/config.yaml 2>/dev/null || true
     chmod 644 /etc/basphere/specs.yaml 2>/dev/null || true
-    # vsphere.env는 vSphere 인증정보 포함 - 사용자가 Terraform 실행을 위해 읽기 필요
-    chmod 644 /etc/basphere/vsphere.env 2>/dev/null || true
+    # vsphere.env는 vSphere 인증정보 포함 - root만 읽기 가능 (API 서버가 root로 실행)
+    chmod 600 /etc/basphere/vsphere.env 2>/dev/null || true
+    chown root:root /etc/basphere/vsphere.env 2>/dev/null || true
 
     log_success "권한 설정 완료"
 }
@@ -430,15 +431,24 @@ print_completion_message() {
     echo ""
     echo "2. vSphere 인증 정보 설정:"
     echo "   sudo vim /etc/basphere/vsphere.env"
+    echo "   (권한 600 - root만 읽기 가능)"
     echo ""
-    echo "3. 관리자 계정을 basphere-admin 그룹에 추가:"
+    echo "3. API 서버 설정 및 실행:"
+    echo "   cd /opt/basphere/basphere-api && make tidy && make build-linux"
+    echo "   sudo cp basphere-api.service /etc/systemd/system/"
+    echo "   sudo systemctl daemon-reload"
+    echo "   sudo systemctl enable --now basphere-api"
+    echo ""
+    echo "4. 관리자 계정을 basphere-admin 그룹에 추가:"
     echo "   sudo usermod -aG basphere-admin <your-username>"
     echo ""
-    echo "4. 사용자 추가 (관리자가 실행):"
+    echo "5. 사용자 추가 (관리자가 실행):"
     echo "   sudo basphere-admin user add <username> --pubkey <pubkey-file>"
     echo ""
-    echo "5. 사용자가 VM 생성:"
+    echo "6. 사용자가 VM 생성:"
     echo "   create-vm"
+    echo ""
+    echo -e "${YELLOW}[주의]${NC} CLI 명령어가 작동하려면 API 서버가 실행 중이어야 합니다."
     echo ""
 }
 

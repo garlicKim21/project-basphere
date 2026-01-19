@@ -8,11 +8,23 @@ Basphere는 VMware vSphere 기반의 셀프서비스 인프라 플랫폼입니�
 ## 아키텍처
 
 ```
-┌─────────────┐     SSH      ┌─────────────┐    Terraform    ┌─────────────┐
-│  Developer  │─────────────▶│   Bastion   │────────────────▶│   vSphere   │
-│  (MacBook)  │              │  (CLI/API)  │                 │  (vCenter)  │
-└─────────────┘              └─────────────┘                 └─────────────┘
+┌─────────────┐     SSH      ┌─────────────┐                 ┌─────────────┐
+│  Developer  │─────────────▶│   Bastion   │                 │   vSphere   │
+│  (MacBook)  │              │             │                 │  (vCenter)  │
+└─────────────┘              └──────┬──────┘                 └─────────────┘
+                             CLI    │                               ▲
+                           (HTTP)   ▼                               │
+                             ┌─────────────┐    Terraform    ───────┘
+                             │ API Server  │
+                             │   (root)    │
+                             └──────┬──────┘
+                                    │
+                                    ▼
+                             vsphere.env
+                             (600, root만 읽기)
 ```
+
+**보안 아키텍처**: CLI는 API 서버를 통해 VM 작업을 수행하며, vSphere 인증 정보는 root만 접근 가능
 
 ## 디렉토리 구조
 
@@ -93,7 +105,8 @@ project-basphere/
 ## 주요 설정 파일 (Bastion)
 
 - `/etc/basphere/config.yaml` - 메인 설정
-- `/etc/basphere/vsphere.env` - vSphere 인증 정보
+- `/etc/basphere/vsphere.env` - vSphere 인증 정보 **(600 권한, root만 읽기)**
+- `/etc/basphere/api.yaml` - API 서버 설정
 - `/etc/basphere/specs.yaml` - VM 스펙 정의
 - `/var/lib/basphere/` - 데이터 디렉토리
 
@@ -147,7 +160,7 @@ list-vms
 delete-vm test
 ```
 
-## MVP 완료 (2026-01-18)
+## MVP 완료 (2026-01-19)
 
 ### 완료된 기능
 
@@ -162,6 +175,8 @@ delete-vm test
 - [x] OS별 네트워크 인터페이스 자동 설정
 - [x] 디스크 자동 확장 (growpart)
 - [x] 5단계 VM 스펙 (tiny, small, medium, large, huge)
+- [x] **API 기반 VM 관리** - CLI → API → Terraform 아키텍처
+- [x] **vSphere 인증 정보 보호** - vsphere.env 600 권한
 
 ### VM 스펙
 
@@ -262,6 +277,12 @@ export VSPHERE_PASSWORD='your-password'
 export VSPHERE_ALLOW_UNVERIFIED_SSL='true'
 ```
 
+**보안 설정 (필수)**:
+```bash
+sudo chmod 600 /etc/basphere/vsphere.env
+sudo chown root:root /etc/basphere/vsphere.env
+```
+
 ### 3. Go 설치 (API 서버 빌드용)
 
 ```bash
@@ -342,14 +363,27 @@ sudo shutdown -h now
 | MTU | 1450 (오버레이) | 1500 (일반) |
 | DNS | 8.8.8.8 | 회사 DNS |
 
-### 7. 설치 후 확인
+### 7. API 서버 설정
+
+```bash
+# systemd 서비스 등록
+sudo cp /opt/basphere/basphere-api/basphere-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable basphere-api
+sudo systemctl start basphere-api
+```
+
+### 8. 설치 후 확인
 
 ```bash
 # CLI 동작 확인
 sudo basphere-admin user list
 
-# API 서버 실행
-sudo /opt/basphere/basphere-api/build/basphere-api-linux-amd64 --dev
+# API 서버 상태 확인
+sudo systemctl status basphere-api
+
+# 헬스 체크
+curl http://localhost:8080/health
 
 # 웹 폼 접속 테스트
 curl http://localhost:8080/register
