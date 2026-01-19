@@ -183,6 +183,10 @@ delete-vm test
 - [x] **vSphere 인증 정보 보호** - vsphere.env 600 권한
 - [x] **nginx 리버스 프록시** - 내부 API 외부 차단, 공개 엔드포인트만 노출
 - [x] **Google reCAPTCHA v2** - 등록 폼 봇 방지
+- [x] **SSH 키 변경 요청** - 웹 폼 + 관리자 승인 워크플로우
+- [x] **이메일 도메인 검증** - 허용된 도메인만 등록 가능
+- [x] **SSH 보안 강화** - 비밀번호 인증 비활성화, fail2ban
+- [x] **외부 접근 지원** - bastion 주소/포트 설정 가능
 
 ### VM 스펙
 
@@ -371,15 +375,166 @@ sudo shutdown -h now
 
 ### 7. API 서버 설정
 
+#### /etc/basphere/api.yaml
+```yaml
+# Basphere API Server Configuration
+
+server:
+  host: "127.0.0.1"        # nginx 뒤에서 실행 (로컬만 바인딩)
+  port: 8080
+
+storage:
+  # 대기 중인 등록 요청 저장 디렉토리
+  pending_dir: "/var/lib/basphere/pending"
+
+provisioner:
+  # basphere-admin 스크립트 경로
+  admin_script: "/usr/local/bin/basphere-admin"
+
+recaptcha:
+  enabled: true                                    # false로 설정 시 reCAPTCHA 비활성화
+  site_key: "your-recaptcha-site-key"              # Google reCAPTCHA v2 사이트 키
+  secret_key: "your-recaptcha-secret-key"          # Google reCAPTCHA v2 시크릿 키
+
+validation:
+  # 허용된 이메일 도메인 (빈 배열 = 모든 도메인 허용)
+  allowed_email_domains: []
+  # 예: allowed_email_domains: ["company.com", "corp.company.com"]
+
+bastion:
+  # 등록 완료 페이지에 표시할 Bastion 서버 주소
+  address: "bastion.example.com"                   # 또는 IP 주소 (예: "172.20.0.10")
+  # SSH 포트 (기본: 22, 외부 노출 시 비표준 포트 사용 권장)
+  port: 22                                         # 외부 노출 시 예: 50022
+```
+
+#### systemd 서비스 등록
 ```bash
-# systemd 서비스 등록
 sudo cp /opt/basphere/basphere-api/basphere-api.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable basphere-api
 sudo systemctl start basphere-api
 ```
 
-### 8. 설치 후 확인
+### 8. Bastion 서버 보안 강화
+
+#### SSH 보안 설정
+
+`/etc/ssh/sshd_config.d/40-basphere-hardening.conf` 생성:
+
+```bash
+cat << 'EOF' | sudo tee /etc/ssh/sshd_config.d/40-basphere-hardening.conf
+# Basphere SSH Hardening Configuration
+
+# === 인증 설정 ===
+PasswordAuthentication no          # 비밀번호 인증 비활성화 (SSH 키만 허용)
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+PermitRootLogin no                 # root 직접 로그인 비활성화
+MaxAuthTries 3                     # 최대 인증 시도 횟수
+LoginGraceTime 30                  # 로그인 유예 시간 (초)
+
+# === 다중 세션 설정 ===
+MaxSessions 20                     # 연결당 최대 세션 수 (ProxyJump, 다중 터미널)
+MaxStartups 10:50:30               # 동시 미인증 연결 제한 (start:rate:full)
+
+# === 기타 보안 설정 ===
+PermitUserEnvironment no
+AllowTcpForwarding yes             # ProxyJump 필요
+Banner none
+UseDNS no                          # DNS 역방향 조회 비활성화 (속도 향상)
+EOF
+
+# 설정 검증 및 적용
+sudo sshd -t && sudo systemctl restart ssh
+```
+
+> **참고**: 파일명이 `40-`으로 시작해야 cloud-init의 `50-cloud-init.conf`보다 먼저 로드되어 설정이 적용됩니다.
+
+#### fail2ban 설치 및 설정
+
+```bash
+# fail2ban 설치
+sudo apt install -y fail2ban
+
+# SSH jail 설정
+cat << 'EOF' | sudo tee /etc/fail2ban/jail.local
+# Basphere fail2ban Configuration
+
+[DEFAULT]
+bantime = 10m
+findtime = 5m
+maxretry = 5
+banaction = iptables-multiport
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3                       # SSH는 3회 실패 시 차단
+bantime = 30m                      # 30분 차단
+findtime = 10m                     # 10분 내 실패 횟수 감시
+EOF
+
+# fail2ban 재시작
+sudo systemctl restart fail2ban
+
+# 상태 확인
+sudo fail2ban-client status sshd
+```
+
+#### 보안 설정 요약
+
+| 설정 | 값 | 설명 |
+|------|-----|------|
+| `PasswordAuthentication` | no | SSH 키 인증만 허용 |
+| `PermitRootLogin` | no | root 로그인 차단 |
+| `MaxAuthTries` | 3 | 인증 시도 제한 |
+| `MaxSessions` | 20 | 다중 세션 허용 |
+| `MaxStartups` | 10:50:30 | DoS 방지 |
+| fail2ban `maxretry` | 3 | 3회 실패 시 차단 |
+| fail2ban `bantime` | 30분 | 차단 시간 |
+
+### 9. 외부 접근 설정 (선택사항)
+
+Bastion 서버를 외부에서 접근 가능하게 설정할 때 참고하세요.
+
+#### 포트 포워딩 (방화벽/라우터)
+
+```
+외부 포트 50022 → 내부 172.20.0.10:22
+```
+
+> **주의**: 비표준 포트(50022 등)를 사용하여 자동화된 공격을 줄일 수 있습니다.
+
+#### DNS 설정
+
+| 레코드 | 값 | 참고 |
+|--------|-----|------|
+| `bastion.example.com` | A 레코드 → 공인 IP | Cloudflare 사용 시 **DNS Only** (회색 구름) |
+
+> **Cloudflare 주의**: Proxied(주황색 구름) 모드는 HTTP/HTTPS만 지원하므로, SSH(TCP)는 **DNS Only**로 설정해야 합니다.
+
+#### api.yaml bastion 설정 예시
+
+```yaml
+# 내부망 접속
+bastion:
+  address: "172.20.0.10"
+  port: 22
+
+# 외부 도메인 접속
+bastion:
+  address: "bastion.example.com"
+  port: 50022
+```
+
+등록 완료 페이지에 SSH 접속 명령어가 자동으로 표시됩니다:
+- 포트 22: `ssh username@bastion.example.com`
+- 포트 50022: `ssh -p 50022 username@bastion.example.com`
+
+### 10. 설치 후 확인
 
 ```bash
 # CLI 동작 확인
@@ -393,4 +548,10 @@ curl http://localhost:8080/health
 
 # 웹 폼 접속 테스트
 curl http://localhost:8080/register
+
+# SSH 보안 설정 확인
+sudo sshd -T | grep -E "^(passwordauthentication|permitrootlogin|maxsessions)"
+
+# fail2ban 상태 확인
+sudo fail2ban-client status sshd
 ```
