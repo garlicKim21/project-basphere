@@ -5,8 +5,8 @@
 # 사용법: basphere-admin <command> [options]
 #
 # 명령어:
-#   user add <username> --pubkey <file>   사용자 추가
-#   user list                             사용자 목록
+#   user add <username> --pubkey <file> [--email <email>] [--team <team>]   사용자 추가
+#   user list                             사용자 목록 (이메일, 팀 포함)
 #   user delete <username>                사용자 삭제
 #   user show <username>                  사용자 정보 조회
 #   user pending [username]               대기 중인 등록 요청 목록/상세
@@ -39,10 +39,11 @@ Basphere 관리자 CLI v${VERSION}
 사용법: basphere-admin <command> [options]
 
 명령어:
-  user add <username> --pubkey <file>   사용자 추가 (직접)
-  user list                             사용자 목록
+  user add <username> --pubkey <file> [--email <email>] [--team <team>]
+                                        사용자 추가 (직접)
+  user list                             사용자 목록 (이메일, 팀 포함)
   user delete <username>                사용자 삭제
-  user show <username>                  사용자 정보 조회
+  user show <username>                  사용자 정보 조회 (이메일, 팀 포함)
   user pending [username]               대기 중인 등록 요청 목록/상세
   user approve <username>               등록 요청 승인 (계정 생성)
   user reject <username> [--reason]     등록 요청 거부
@@ -52,7 +53,7 @@ Basphere 관리자 CLI v${VERSION}
   -v, --version   버전 출력
 
 예시:
-  basphere-admin user add kimht --pubkey /path/to/id_ed25519.pub
+  basphere-admin user add kimht --pubkey /path/to/id_ed25519.pub --email kim@company.com --team DevOps
   basphere-admin user list
   basphere-admin user show kimht
   basphere-admin user delete kimht
@@ -205,12 +206,22 @@ delete_vsphere_user_folder() {
 user_add() {
     local username=""
     local pubkey_file=""
+    local email=""
+    local team=""
 
     # 인자 파싱
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --pubkey)
                 pubkey_file="$2"
+                shift 2
+                ;;
+            --email)
+                email="$2"
+                shift 2
+                ;;
+            --team)
+                team="$2"
                 shift 2
                 ;;
             -*)
@@ -286,6 +297,8 @@ user_add() {
     cat > "$user_dir/metadata.json" << EOF
 {
     "username": "$username",
+    "email": "${email:-}",
+    "team": "${team:-}",
     "created_at": "$timestamp",
     "created_by": "$(get_current_user)",
     "status": "active"
@@ -348,7 +361,7 @@ user_list() {
         exit 0
     fi
 
-    print_table_header "%-15s %-33s %-6s %-8s %s" "USERNAME" "IP_BLOCK" "VMs" "STATUS" "CREATED"
+    print_table_header "%-12s %-25s %-12s %-4s %-8s %s" "USERNAME" "EMAIL" "TEAM" "VMs" "STATUS" "CREATED"
 
     for user_dir in "$users_dir"/*/; do
         [[ ! -d "$user_dir" ]] && continue
@@ -359,10 +372,13 @@ user_list() {
         local metadata_file="$user_dir/metadata.json"
 
         if [[ -f "$metadata_file" ]]; then
-            local ip_block_start ip_block_range created_at status vm_count
+            local email team created_at status vm_count
 
-            ip_block_start=$(jq -r '.ip_block // "-"' "$metadata_file")
-            ip_block_range=$(format_ip_block_range "$ip_block_start")
+            email=$(jq -r '.email // "-"' "$metadata_file")
+            team=$(jq -r '.team // "-"' "$metadata_file")
+            # 빈 문자열인 경우 "-"로 표시
+            [[ -z "$email" ]] && email="-"
+            [[ -z "$team" ]] && team="-"
             created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
             status=$(jq -r '.status // "active"' "$metadata_file")
 
@@ -374,7 +390,7 @@ user_list() {
                 vm_count=0
             fi
 
-            print_table_row "%-15s %-33s %-6s %-8s %s" "$username" "$ip_block_range" "$vm_count" "$status" "$created_at"
+            print_table_row "%-12s %-25s %-12s %-4s %-8s %s" "$username" "$email" "$team" "$vm_count" "$status" "$created_at"
         fi
     done
 }
@@ -608,9 +624,11 @@ user_approve() {
         exit 1
     fi
 
-    # 공개키 추출
-    local public_key
+    # 요청 정보 추출
+    local public_key email team
     public_key=$(jq -r '.public_key' "$req_file")
+    email=$(jq -r '.email // ""' "$req_file")
+    team=$(jq -r '.team // ""' "$req_file")
 
     # 임시 파일에 공개키 저장
     local temp_pubkey="/tmp/basphere-approve-$username.pub"
@@ -618,8 +636,12 @@ user_approve() {
 
     log_info "등록 요청 승인 중: $username"
 
-    # user_add 함수 호출
-    if user_add "$username" --pubkey "$temp_pubkey"; then
+    # user_add 함수 호출 (email, team 포함)
+    local add_args=("$username" --pubkey "$temp_pubkey")
+    [[ -n "$email" ]] && add_args+=(--email "$email")
+    [[ -n "$team" ]] && add_args+=(--team "$team")
+
+    if user_add "${add_args[@]}"; then
         # 요청 상태 업데이트
         local timestamp
         timestamp=$(get_timestamp)
