@@ -61,11 +61,21 @@ func (h *Handler) Router() http.Handler {
 
 	// API routes (JSON)
 	r.Route("/api/v1", func(r chi.Router) {
+		// User registration
 		r.Post("/register", h.apiRegister)
 		r.Get("/pending", h.apiListPending)
 		r.Get("/pending/{username}", h.apiGetPending)
 		r.Post("/users/{username}/approve", h.apiApprove)
 		r.Post("/users/{username}/reject", h.apiReject)
+
+		// VM management
+		r.Post("/vms", h.apiCreateVM)
+		r.Get("/vms", h.apiListVMs)
+		r.Get("/vms/{name}", h.apiGetVM)
+		r.Delete("/vms/{name}", h.apiDeleteVM)
+
+		// Quota
+		r.Get("/quota", h.apiGetQuota)
 	})
 
 	// Health check

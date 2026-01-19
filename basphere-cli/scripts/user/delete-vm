@@ -2,7 +2,10 @@
 #
 # VM 삭제 스크립트 (사용자용)
 #
-# 사용법: delete-vm <vm-name>
+# 사용법: delete-vm <vm-name> [옵션]
+#
+# 일반 모드: API 서버를 통해 VM 삭제
+# API 모드 (--api): 직접 Terraform 실행 (API 서버에서 호출)
 #
 
 set -euo pipefail
@@ -43,8 +46,8 @@ EOF
     exit 0
 }
 
-# VM 삭제 실행
-delete_single_vm() {
+# VM 삭제 실행 (API 모드 - Terraform 직접 실행)
+delete_single_vm_api_mode() {
     local vm_name="$1"
     local user="$2"
 
@@ -53,11 +56,11 @@ delete_single_vm() {
 
     # VM 존재 확인
     if [[ ! -d "$tf_dir" ]]; then
-        log_error "VM을 찾을 수 없습니다: $vm_name"
+        echo "{\"error\": \"VM not found: $vm_name\"}" >&2
         return 1
     fi
 
-    # 메타데이터에서 정보 가져오기 (정리 및 로깅용)
+    # 메타데이터에서 정보 가져오기
     local ip_address=""
     local os_type=""
     if [[ -f "$metadata_file" ]]; then
@@ -65,15 +68,13 @@ delete_single_vm() {
         os_type=$(jq -r '.os // ""' "$metadata_file")
     fi
 
-    log_info "VM 삭제 중: $vm_name"
-
     # 상태 업데이트
     if [[ -f "$metadata_file" ]]; then
         jq '.status = "deleting"' "$metadata_file" > "$metadata_file.tmp" && \
             mv "$metadata_file.tmp" "$metadata_file"
     fi
 
-    # Terraform destroy 실행 (서브쉘 내에서 환경변수 로드)
+    # Terraform destroy 실행
     local destroy_success=true
 
     if [[ -f "$tf_dir/main.tf" ]]; then
@@ -89,24 +90,18 @@ delete_single_vm() {
 
             # terraform destroy
             if ! terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
-                log_warn "Terraform destroy 실패 (로그: $tf_dir/terraform-destroy.log)"
                 exit 1
             fi
         )
 
         if [[ $? -ne 0 ]]; then
             destroy_success=false
-            log_warn "vSphere에서 VM 삭제 실패. 로컬 데이터만 정리합니다."
         fi
     fi
 
     # IP 반환
     if [[ -n "$ip_address" ]]; then
-        if "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null; then
-            log_success "IP 반환 완료: $ip_address"
-        else
-            log_warn "IP 반환 실패: $ip_address"
-        fi
+        "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
     fi
 
     # Terraform 디렉토리 삭제
@@ -115,19 +110,52 @@ delete_single_vm() {
     # 감사 로그
     audit_log "DELETE_VM" "$vm_name" "user=$user,os=$os_type,ip=$ip_address"
 
+    # JSON 출력
     if [[ "$destroy_success" == "true" ]]; then
-        log_success "VM 삭제 완료: $vm_name"
+        echo "{\"success\": true, \"message\": \"VM deleted\", \"name\": \"$vm_name\"}"
     else
-        log_warn "VM 삭제 완료 (경고 있음): $vm_name"
+        echo "{\"success\": true, \"message\": \"VM deleted with warnings\", \"name\": \"$vm_name\"}"
     fi
 
     return 0
+}
+
+# 일반 모드 - API를 통한 VM 삭제
+delete_vm_via_api() {
+    local vm_name="$1"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        exit 1
+    fi
+
+    log_info "VM 삭제 요청 중..."
+
+    # API 호출
+    local response
+    response=$(api_call "DELETE" "/api/v1/vms/$vm_name")
+
+    # 응답 파싱
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        log_success "VM 삭제 완료: $vm_name"
+        return 0
+    else
+        local error_msg
+        error_msg=$(api_get_error "$response")
+        log_error "VM 삭제 실패: $error_msg"
+        return 1
+    fi
 }
 
 # 메인 함수
 main() {
     local vm_name=""
     local force=false
+    local api_mode=false
+    local target_user=""
 
     # 인자 파싱
     while [[ $# -gt 0 ]]; do
@@ -135,6 +163,14 @@ main() {
             -f|--force)
                 force=true
                 shift
+                ;;
+            --api)
+                api_mode=true
+                shift
+                ;;
+            --user)
+                target_user="$2"
+                shift 2
                 ;;
             -h|--help)
                 usage
@@ -159,13 +195,26 @@ main() {
         exit 1
     fi
 
+    # API 모드: Terraform 직접 실행 (API 서버에서 호출)
+    if [[ "$api_mode" == "true" ]]; then
+        local user="${target_user:-$CURRENT_USER}"
+
+        if delete_single_vm_api_mode "$vm_name" "$user"; then
+            exit 0
+        else
+            exit 1
+        fi
+    fi
+
+    # 일반 모드: 사용자 확인 후 API 호출
+
     # 사용자 확인
     if ! user_exists "$CURRENT_USER"; then
         log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
         exit 1
     fi
 
-    # VM 존재 확인
+    # VM 존재 확인 (로컬 체크)
     if ! vm_name_exists "$CURRENT_USER" "$vm_name"; then
         log_error "VM을 찾을 수 없습니다: $vm_name"
         exit 1
@@ -196,8 +245,8 @@ main() {
 
     echo ""
 
-    # VM 삭제
-    if delete_single_vm "$vm_name" "$CURRENT_USER"; then
+    # API를 통해 VM 삭제
+    if delete_vm_via_api "$vm_name"; then
         exit 0
     else
         exit 1

@@ -4,6 +4,8 @@
 #
 # 사용법: show-quota
 #
+# API 서버를 통해 할당량 조회 (실패 시 로컬 fallback)
+#
 
 set -euo pipefail
 
@@ -36,7 +38,10 @@ progress_bar() {
     local max="$2"
     local width=30
 
-    local percent=$((current * 100 / max))
+    local percent=0
+    if [[ $max -gt 0 ]]; then
+        percent=$((current * 100 / max))
+    fi
     local filled=$((current * width / max))
     local empty=$((width - filled))
 
@@ -55,32 +60,9 @@ progress_bar() {
     printf "[${color}%s${NC}] %d/%d (%d%%)" "$bar" "$current" "$max" "$percent"
 }
 
-# 메인 함수
-main() {
-    local json_output=false
-
-    # 인자 파싱
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -j|--json)
-                json_output=true
-                shift
-                ;;
-            -h|--help)
-                usage
-                ;;
-            *)
-                log_error "알 수 없는 옵션: $1"
-                usage
-                ;;
-        esac
-    done
-
-    # 사용자 확인
-    if ! user_exists "$CURRENT_USER"; then
-        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
-        exit 1
-    fi
+# 로컬 데이터에서 할당량 조회
+show_quota_local() {
+    local json_output="$1"
 
     # 할당량 로드
     local max_vms max_clusters max_ips
@@ -129,7 +111,7 @@ main() {
     }
 }
 EOF
-        exit 0
+        return 0
     fi
 
     # 테이블 출력
@@ -166,6 +148,107 @@ EOF
     echo ""
 
     echo ""
+}
+
+# API를 통한 할당량 조회
+show_quota_via_api() {
+    local json_output="$1"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        show_quota_local "$json_output"
+        return
+    fi
+
+    # API 호출
+    local response
+    response=$(api_call "GET" "/api/v1/quota")
+
+    # 응답 파싱
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" != "true" ]]; then
+        show_quota_local "$json_output"
+        return
+    fi
+
+    if [[ "$json_output" == "true" ]]; then
+        echo "$response" | jq '.data'
+        return 0
+    fi
+
+    # 데이터 추출
+    local max_vms used_vms max_ips used_ips
+    max_vms=$(echo "$response" | jq -r '.data.max_vms // 10')
+    used_vms=$(echo "$response" | jq -r '.data.used_vms // 0')
+    max_ips=$(echo "$response" | jq -r '.data.max_ips // 32')
+    used_ips=$(echo "$response" | jq -r '.data.used_ips // 0')
+
+    # IP 블록 정보 (로컬에서)
+    local ip_block
+    ip_block=$(get_user_metadata "$CURRENT_USER" "ip_block")
+
+    # 테이블 출력
+    echo ""
+    echo "=== 할당량 ($CURRENT_USER) ==="
+    echo ""
+
+    # IP 블록 정보
+    if [[ -n "$ip_block" ]]; then
+        local ip_block_range
+        ip_block_range=$(format_ip_block_range "$ip_block" "$max_ips")
+        echo "IP 블록: $ip_block_range (${max_ips}개)"
+    else
+        echo "IP 블록: 할당되지 않음"
+    fi
+
+    echo ""
+    echo "리소스 사용량:"
+    echo ""
+
+    # VMs
+    printf "  VMs:       "
+    progress_bar "$used_vms" "$max_vms"
+    echo ""
+
+    # IPs
+    printf "  IPs:       "
+    progress_bar "$used_ips" "$max_ips"
+    echo ""
+
+    echo ""
+}
+
+# 메인 함수
+main() {
+    local json_output=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -j|--json)
+                json_output=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    # API를 통해 할당량 조회 (실패 시 로컬 fallback)
+    show_quota_via_api "$json_output"
 }
 
 main "$@"

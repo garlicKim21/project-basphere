@@ -2,7 +2,10 @@
 #
 # VM 생성 스크립트 (사용자용)
 #
-# 사용법: create-vm
+# 사용법: create-vm [옵션]
+#
+# 일반 모드: API 서버를 통해 VM 생성
+# API 모드 (--api): 직접 Terraform 실행 (API 서버에서 호출)
 #
 
 set -euo pipefail
@@ -238,32 +241,28 @@ generate_terraform_file() {
         "$template_file" > "$output_dir/main.tf"
 }
 
-# VM 생성 실행
-create_single_vm() {
+# VM 생성 실행 (API 모드 - Terraform 직접 실행)
+create_single_vm_api_mode() {
     local vm_name="$1"
     local os_type="$2"
     local spec="$3"
     local user="$4"
-
-    log_info "VM 생성 준비 중: $vm_name ($os_type, $spec)"
 
     # Terraform 디렉토리
     local tf_dir="$BASPHERE_DATA_DIR/terraform/$user/$vm_name"
 
     # 이미 존재하는지 확인
     if [[ -d "$tf_dir" ]]; then
-        log_error "VM이 이미 존재합니다: $vm_name"
+        echo "{\"error\": \"VM already exists: $vm_name\"}" >&2
         return 1
     fi
 
     # IP 할당
     local ip_address
     if ! ip_address=$("$INTERNAL_SCRIPTS/allocate-ip" "$user" "$vm_name" "vm" 2>/dev/null); then
-        log_error "IP 할당 실패"
+        echo "{\"error\": \"IP allocation failed\"}" >&2
         return 1
     fi
-
-    log_success "IP 할당: $ip_address"
 
     # Terraform 디렉토리 생성
     mkdir -p "$tf_dir"
@@ -278,33 +277,35 @@ create_single_vm() {
 
     # vSphere VM 이름 (사용자 프리픽스 포함)
     local vsphere_vm_name="${user}-${vm_name}"
+    local login_user
+    login_user=$(get_os_default_user "$os_type")
 
     # 메타데이터 생성
+    local created_at
+    created_at=$(get_timestamp)
     cat > "$tf_dir/metadata.json" << EOF
 {
     "name": "$vm_name",
     "vsphere_vm_name": "$vsphere_vm_name",
     "owner": "$user",
     "os": "$os_type",
-    "login_user": "$user",
+    "login_user": "$login_user",
     "spec": "$spec",
     "ip_address": "$ip_address",
-    "created_at": "$(get_timestamp)",
+    "created_at": "$created_at",
     "status": "creating"
 }
 EOF
 
     # vSphere 인증 정보 파일 확인
     if [[ ! -f "$BASPHERE_VSPHERE_ENV" ]]; then
-        log_error "vSphere 인증 정보 파일을 찾을 수 없습니다: $BASPHERE_VSPHERE_ENV"
+        echo "{\"error\": \"vSphere credentials not found\"}" >&2
         "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
         rm -rf "$tf_dir"
         return 1
     fi
 
     # Terraform 실행 (서브쉘 내에서 환경변수 로드)
-    log_info "VM 생성 중... (몇 분 소요될 수 있습니다)"
-
     (
         cd "$tf_dir"
 
@@ -315,13 +316,11 @@ EOF
 
         # terraform init
         if ! terraform init -no-color > terraform-init.log 2>&1; then
-            log_error "Terraform init 실패 (로그: $tf_dir/terraform-init.log)"
             exit 1
         fi
 
         # terraform apply
         if ! terraform apply -auto-approve -no-color > terraform-apply.log 2>&1; then
-            log_error "Terraform apply 실패 (로그: $tf_dir/terraform-apply.log)"
             exit 1
         fi
     )
@@ -330,6 +329,7 @@ EOF
         # 실패 시 정리
         jq '.status = "failed"' "$tf_dir/metadata.json" > "$tf_dir/metadata.json.tmp" && \
             mv "$tf_dir/metadata.json.tmp" "$tf_dir/metadata.json"
+        echo "{\"error\": \"Terraform apply failed\"}" >&2
         return 1
     fi
 
@@ -340,8 +340,70 @@ EOF
     # 감사 로그
     audit_log "CREATE_VM" "$vm_name" "user=$user,os=$os_type,spec=$spec,ip=$ip_address"
 
-    log_success "VM 생성 완료: $vm_name ($ip_address)"
+    # JSON 출력 (API 모드)
+    cat "$tf_dir/metadata.json"
     return 0
+}
+
+# 일반 모드 - API를 통한 VM 생성
+create_vm_via_api() {
+    local vm_name="$1"
+    local os_type="$2"
+    local spec="$3"
+    local count="$4"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        exit 1
+    fi
+
+    # JSON 데이터 생성
+    local json_data
+    json_data=$(jq -n \
+        --arg name "$vm_name" \
+        --arg os "$os_type" \
+        --arg spec "$spec" \
+        --argjson count "$count" \
+        '{name: $name, os: $os, spec: $spec, count: $count}')
+
+    log_info "VM 생성 요청 중..."
+
+    # API 호출
+    local response
+    response=$(api_call "POST" "/api/v1/vms" "$json_data")
+
+    # 응답 파싱
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        local created failed
+        created=$(echo "$response" | jq -r '.data.created // 0')
+        failed=$(echo "$response" | jq -r '.data.failed // 0')
+
+        # 생성된 VM 정보 출력
+        echo ""
+        echo "=========================================="
+        echo "생성 완료: $created / $count"
+        if [[ $failed -gt 0 ]]; then
+            echo "실패: $failed"
+        fi
+        echo "=========================================="
+
+        # 각 VM 정보 출력
+        echo "$response" | jq -r '.data.vms[]? | "  - \(.name): \(.ip_address) (\(.status))"'
+
+        echo ""
+        echo "VM 접속: ssh <login_user>@<IP_ADDRESS>"
+        echo "VM 목록: list-vms"
+
+        return 0
+    else
+        local error_msg
+        error_msg=$(api_get_error "$response")
+        log_error "VM 생성 실패: $error_msg"
+        return 1
+    fi
 }
 
 # 메인 함수
@@ -350,6 +412,8 @@ main() {
     local os_type=""
     local spec=""
     local count=1
+    local api_mode=false
+    local target_user=""
 
     # 인자 파싱
     while [[ $# -gt 0 ]]; do
@@ -370,6 +434,14 @@ main() {
                 count="$2"
                 shift 2
                 ;;
+            --api)
+                api_mode=true
+                shift
+                ;;
+            --user)
+                target_user="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 ;;
@@ -379,6 +451,24 @@ main() {
                 ;;
         esac
     done
+
+    # API 모드: Terraform 직접 실행 (API 서버에서 호출)
+    if [[ "$api_mode" == "true" ]]; then
+        local user="${target_user:-$CURRENT_USER}"
+
+        if [[ -z "$vm_name" || -z "$os_type" || -z "$spec" ]]; then
+            echo "{\"error\": \"Missing required parameters: name, os, spec\"}" >&2
+            exit 1
+        fi
+
+        if create_single_vm_api_mode "$vm_name" "$os_type" "$spec" "$user"; then
+            exit 0
+        else
+            exit 1
+        fi
+    fi
+
+    # 일반 모드: 사용자 대화형 입력 후 API 호출
 
     # 사용자 확인
     if ! user_exists "$CURRENT_USER"; then
@@ -400,7 +490,7 @@ main() {
         fi
     fi
 
-    # 이름 중복 확인
+    # 이름 중복 확인 (로컬 체크)
     if vm_name_exists "$CURRENT_USER" "$vm_name"; then
         log_error "이미 존재하는 VM 이름입니다: $vm_name"
         exit 1
@@ -467,19 +557,6 @@ main() {
         count=$(prompt_number "생성할 VM 대수" 1 1 10)
     fi
 
-    # Quota 확인 (_folder 디렉토리 제외)
-    local max_vms current_vms
-    max_vms=$(get_config '.quotas.default.max_vms' '10')
-    current_vms=0
-    if [[ -d "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" ]]; then
-        current_vms=$(find "$BASPHERE_DATA_DIR/terraform/$CURRENT_USER" -mindepth 1 -maxdepth 1 -type d ! -name "_folder" 2>/dev/null | wc -l | tr -d ' ')
-    fi
-
-    if [[ $((current_vms + count)) -gt $max_vms ]]; then
-        log_error "VM 할당량을 초과합니다 (현재: $current_vms, 요청: $count, 최대: $max_vms)"
-        exit 1
-    fi
-
     # 확인
     echo ""
     echo "생성할 VM 정보:"
@@ -496,35 +573,8 @@ main() {
 
     echo ""
 
-    # VM 생성
-    local created=0
-    local failed=0
-
-    for ((i=1; i<=count; i++)); do
-        local current_vm_name
-        if [[ $count -eq 1 ]]; then
-            current_vm_name="$vm_name"
-        else
-            current_vm_name="${vm_name}-${i}"
-        fi
-
-        if create_single_vm "$current_vm_name" "$os_type" "$spec" "$CURRENT_USER"; then
-            ((created++)) || true
-        else
-            ((failed++)) || true
-        fi
-    done
-
-    echo ""
-    echo "=========================================="
-    echo "생성 완료: $created / $count"
-    if [[ $failed -gt 0 ]]; then
-        echo "실패: $failed"
-    fi
-    echo "=========================================="
-    echo ""
-    echo "VM 접속: ssh $CURRENT_USER@<IP_ADDRESS>"
-    echo "VM 목록: list-vms"
+    # API를 통해 VM 생성
+    create_vm_via_api "$vm_name" "$os_type" "$spec" "$count"
 }
 
 main "$@"

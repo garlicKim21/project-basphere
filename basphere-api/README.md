@@ -75,6 +75,8 @@ sudo systemctl start basphere-api
 
 ### REST API
 
+#### 사용자 등록
+
 | Method | 경로 | 설명 |
 |--------|------|------|
 | POST | `/api/v1/register` | 등록 요청 (JSON) |
@@ -82,6 +84,21 @@ sudo systemctl start basphere-api
 | GET | `/api/v1/pending/{username}` | 특정 요청 조회 |
 | POST | `/api/v1/users/{username}/approve` | 요청 승인 |
 | POST | `/api/v1/users/{username}/reject` | 요청 거부 |
+
+#### VM 관리
+
+| Method | 경로 | 설명 |
+|--------|------|------|
+| POST | `/api/v1/vms` | VM 생성 |
+| GET | `/api/v1/vms` | VM 목록 조회 |
+| GET | `/api/v1/vms/{name}` | VM 상세 조회 |
+| DELETE | `/api/v1/vms/{name}` | VM 삭제 |
+| GET | `/api/v1/quota` | 할당량 조회 |
+
+#### 기타
+
+| Method | 경로 | 설명 |
+|--------|------|------|
 | GET | `/health` | 헬스 체크 |
 
 ### API 예시
@@ -107,6 +124,25 @@ curl -X POST http://localhost:8080/api/v1/users/hong/approve
 curl -X POST http://localhost:8080/api/v1/users/hong/reject \
   -H "Content-Type: application/json" \
   -d '{"reason": "중복 요청"}'
+
+# VM 생성
+curl -X POST http://localhost:8080/api/v1/vms \
+  -H "Content-Type: application/json" \
+  -H "X-Basphere-User: hong" \
+  -d '{
+    "name": "my-vm",
+    "os": "ubuntu-24.04",
+    "spec": "small"
+  }'
+
+# VM 목록 조회
+curl -H "X-Basphere-User: hong" http://localhost:8080/api/v1/vms
+
+# VM 삭제
+curl -X DELETE -H "X-Basphere-User: hong" http://localhost:8080/api/v1/vms/my-vm
+
+# 할당량 조회
+curl -H "X-Basphere-User: hong" http://localhost:8080/api/v1/quota
 ```
 
 ## 설정

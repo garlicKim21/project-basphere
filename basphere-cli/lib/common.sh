@@ -397,3 +397,67 @@ show_spinner() {
     done
     printf "\r"
 }
+
+# ============================================
+# API 호출 함수
+# ============================================
+
+# API 서버 URL (설정에서 읽거나 기본값 사용)
+get_api_url() {
+    local url
+    url=$(get_config '.api.url' 'http://localhost:8080')
+    echo "$url"
+}
+
+# API 호출 공통 함수
+api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="${3:-}"
+    local api_url
+    api_url=$(get_api_url)
+    local user
+    user=$(get_current_user)
+
+    local curl_args=(
+        -s
+        -X "$method"
+        -H "Content-Type: application/json"
+        -H "X-Basphere-User: $user"
+    )
+
+    if [[ -n "$data" ]]; then
+        curl_args+=(-d "$data")
+    fi
+
+    curl "${curl_args[@]}" "${api_url}${endpoint}"
+}
+
+# API 응답 파싱 함수
+api_check_success() {
+    local response="$1"
+    echo "$response" | jq -r '.success // false'
+}
+
+api_get_message() {
+    local response="$1"
+    echo "$response" | jq -r '.message // ""'
+}
+
+api_get_error() {
+    local response="$1"
+    echo "$response" | jq -r '.errors[]? // .message // "Unknown error"'
+}
+
+# API 서버 연결 확인
+check_api_connection() {
+    local api_url
+    api_url=$(get_api_url)
+
+    if ! curl -s --connect-timeout 2 "${api_url}/health" > /dev/null 2>&1; then
+        log_error "API 서버에 연결할 수 없습니다: $api_url"
+        log_info "API 서버가 실행 중인지 확인하세요."
+        return 1
+    fi
+    return 0
+}
