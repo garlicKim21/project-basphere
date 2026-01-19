@@ -43,7 +43,7 @@ ssh <your-username>@<bastion-server>
 
 예시:
 ```bash
-ssh kimht@bastion.company.local
+ssh <user-id>@bastion.company.local
 ```
 
 > **접속 오류 시**: [SSH 키 가이드](ssh-guide-macos.md)의 트러블슈팅 섹션을 참조하세요.
@@ -131,7 +131,7 @@ create-vm -n web-server -s medium -c 3
 > - 최대 63자
 >
 > **참고**: vSphere에서는 사용자 이름이 자동으로 VM 이름 앞에 붙습니다.
-> 예: `my-server` → vSphere에서 `kimht-my-server`로 표시
+> 예: `my-server` → vSphere에서 `<user-id>-my-server`로 표시
 
 ### 여러 VM 생성 시
 
@@ -141,9 +141,9 @@ create-vm -n web-server -s medium -c 3
 create-vm -n web -s small -c 3
 ```
 
-결과 (사용자가 kimht인 경우):
+결과:
 - CLI: `web-1`, `web-2`, `web-3`
-- vSphere: `kimht-web-1`, `kimht-web-2`, `kimht-web-3`
+- vSphere: `<user-id>-web-1`, `<user-id>-web-2`, `<user-id>-web-3`
 - IP: 10.254.0.32, 10.254.0.33, 10.254.0.34
 
 ---
@@ -158,7 +158,7 @@ list-vms
 
 출력 예시:
 ```
-=== VM 목록 (kimht) ===
+=== VM 목록 (<user-id>) ===
 
 NAME                 IP               SPEC       STATUS
 --------------------------------------------------------------------------------
@@ -231,7 +231,7 @@ list-resources
 
 출력 예시:
 ```
-=== 리소스 목록 (kimht) ===
+=== 리소스 목록 (<user-id>) ===
 
 --- VMs ---
 NAME                 IP               SPEC       STATUS
@@ -257,7 +257,7 @@ show-quota
 
 출력 예시:
 ```
-=== 할당량 (kimht) ===
+=== 할당량 (<user-id>) ===
 
 IP 블록: 10.254.0.32 (32개)
 
@@ -281,20 +281,15 @@ show-quota -j
 VM이 생성되면 SSH로 접속할 수 있습니다.
 
 ```bash
-# Ubuntu VM
-ssh ubuntu@<vm-ip>
-
-# Rocky Linux VM
-ssh rocky@<vm-ip>
+ssh <user-id>@<vm-ip>
 ```
 
 예시:
 ```bash
-ssh ubuntu@10.254.0.32
-ssh rocky@10.254.0.33
+ssh <user-id>@10.254.0.32
 ```
 
-> **기본 사용자**: OS에 따라 다름 (`ubuntu` 또는 `rocky`)
+> **사용자 계정**: Bastion과 동일한 사용자 ID 사용
 > **인증 방식**: Bastion에 등록된 SSH 키와 동일한 키 사용
 
 ### Bastion을 통한 접속 (ProxyJump)
@@ -302,12 +297,12 @@ ssh rocky@10.254.0.33
 로컬에서 직접 VM에 접속하려면:
 
 ```bash
-ssh -J <username>@<bastion> ubuntu@<vm-ip>
+ssh -J <user-id>@<bastion> <user-id>@<vm-ip>
 ```
 
 예시:
 ```bash
-ssh -J kimht@bastion.company.local ubuntu@10.254.0.32
+ssh -J <user-id>@bastion.company.local <user-id>@10.254.0.32
 ```
 
 또는 `~/.ssh/config`에 설정:
@@ -315,11 +310,11 @@ ssh -J kimht@bastion.company.local ubuntu@10.254.0.32
 ```
 Host bastion
     HostName bastion.company.local
-    User kimht
+    User <user-id>
 
 Host 10.254.0.*
     ProxyJump bastion
-    User ubuntu
+    User <user-id>
 ```
 
 이후:
@@ -341,10 +336,12 @@ ssh 10.254.0.32
 
 ## 지원 OS
 
-| OS | 옵션값 | 기본 사용자 |
-|----|--------|------------|
-| Ubuntu 24.04 LTS | `ubuntu-24.04` | `ubuntu` |
-| Rocky Linux 10.1 | `rocky-10.1` | `rocky` |
+| OS | 옵션값 |
+|----|--------|
+| Ubuntu 24.04 LTS | `ubuntu-24.04` |
+| Rocky Linux 10.1 | `rocky-10.1` |
+
+> **참고**: VM 접속 시 Bastion과 동일한 사용자 ID를 사용합니다.
 
 ---
 
@@ -401,7 +398,7 @@ create-vm
 
 1. VM 상태가 `running`인지 확인 (`list-vms`)
 2. VM 부팅 완료 대기 (생성 후 1-2분)
-3. 올바른 사용자명 사용 (`ubuntu`)
+3. 올바른 사용자명 사용 (Bastion과 동일한 사용자 ID)
 4. SSH 키가 올바른지 확인
 
 ### Q: VM의 IP 주소를 변경할 수 있나요?

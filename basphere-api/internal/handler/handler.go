@@ -162,7 +162,8 @@ func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) successPage(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
 	if err := h.templates.ExecuteTemplate(w, "success.html", map[string]string{
-		"Username": username,
+		"Username":       username,
+		"BastionAddress": h.config.Bastion.Address,
 	}); err != nil {
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}

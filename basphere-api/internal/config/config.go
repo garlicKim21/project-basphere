@@ -13,6 +13,13 @@ type Config struct {
 	Provisioner ProvisionerConfig `yaml:"provisioner"`
 	Recaptcha   RecaptchaConfig   `yaml:"recaptcha"`
 	Validation  ValidationConfig  `yaml:"validation"`
+	Bastion     BastionConfig     `yaml:"bastion"`
+}
+
+// BastionConfig represents the bastion server configuration for display
+type BastionConfig struct {
+	// Address to display in templates (e.g., "bastion.company.local" or "172.20.0.10")
+	Address string `yaml:"address"`
 }
 
 // RecaptchaConfig represents the reCAPTCHA configuration
@@ -58,6 +65,9 @@ func DefaultConfig() *Config {
 		},
 		Provisioner: ProvisionerConfig{
 			AdminScript: "/usr/local/bin/basphere-admin",
+		},
+		Bastion: BastionConfig{
+			Address: "bastion-server",
 		},
 	}
 }
