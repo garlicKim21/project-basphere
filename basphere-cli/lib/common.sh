@@ -374,7 +374,7 @@ print_table_header() {
     local format="$1"
     shift
     printf "${CYAN}$format${NC}\n" "$@"
-    printf '%*s\n' "${COLUMNS:-80}" '' | tr ' ' '-'
+    printf '%*s\n' "${COLUMNS:-100}" '' | tr ' ' '-'
 }
 
 print_table_row() {
