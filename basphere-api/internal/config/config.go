@@ -20,6 +20,8 @@ type Config struct {
 type BastionConfig struct {
 	// Address to display in templates (e.g., "bastion.company.local" or "172.20.0.10")
 	Address string `yaml:"address"`
+	// SSH port (default: 22, use non-standard port like 50022 for external access)
+	Port int `yaml:"port"`
 }
 
 // RecaptchaConfig represents the reCAPTCHA configuration
@@ -68,6 +70,7 @@ func DefaultConfig() *Config {
 		},
 		Bastion: BastionConfig{
 			Address: "bastion-server",
+			Port:    22,
 		},
 	}
 }
