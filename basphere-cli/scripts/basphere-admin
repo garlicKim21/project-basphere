@@ -5,13 +5,15 @@
 # 사용법: basphere-admin <command> [options]
 #
 # 명령어:
-#   user add <username> --pubkey <file> [--email <email>] [--team <team>]   사용자 추가
-#   user list                             사용자 목록 (이메일, 팀 포함)
-#   user delete <username>                사용자 삭제
+#   user list                             사용자 목록
 #   user show <username>                  사용자 정보 조회
+#   user delete <username>                사용자 삭제
 #   user pending [username]               대기 중인 등록 요청 목록/상세
 #   user approve <username>               등록 요청 승인
 #   user reject <username> [--reason]     등록 요청 거부
+#   key pending [username]                대기 중인 키 변경 요청 목록/상세
+#   key approve <username>                키 변경 요청 승인
+#   key reject <username> [--reason]      키 변경 요청 거부
 #
 
 set -euo pipefail
@@ -39,27 +41,31 @@ Basphere 관리자 CLI v${VERSION}
 사용법: basphere-admin <command> [options]
 
 명령어:
-  user add <username> --pubkey <file> [--email <email>] [--team <team>]
-                                        사용자 추가 (직접)
-  user list                             사용자 목록 (이메일, 팀 포함)
+  user list                             사용자 목록
+  user show <username>                  사용자 정보 조회
   user delete <username>                사용자 삭제
-  user show <username>                  사용자 정보 조회 (이메일, 팀 포함)
   user pending [username]               대기 중인 등록 요청 목록/상세
   user approve <username>               등록 요청 승인 (계정 생성)
   user reject <username> [--reason]     등록 요청 거부
+
+  key pending [username]                대기 중인 키 변경 요청 목록/상세
+  key approve <username>                키 변경 요청 승인
+  key reject <username> [--reason]      키 변경 요청 거부
 
 옵션:
   -h, --help      도움말 출력
   -v, --version   버전 출력
 
 예시:
-  basphere-admin user add kimht --pubkey /path/to/id_ed25519.pub --email kim@company.com --team DevOps
   basphere-admin user list
   basphere-admin user show kimht
-  basphere-admin user delete kimht
   basphere-admin user pending
   basphere-admin user approve kimht
   basphere-admin user reject kimht --reason "중복 요청"
+
+  basphere-admin key pending
+  basphere-admin key approve kimht
+  basphere-admin key reject kimht --reason "본인 확인 실패"
 EOF
     exit 0
 }
@@ -732,6 +738,215 @@ user_reject() {
 }
 
 # ============================================
+# SSH 키 변경 관리 함수
+# ============================================
+
+# 키 변경 요청 디렉토리
+KEY_CHANGE_DIR="/var/lib/basphere/pending/key-changes"
+
+# 대기 중인 키 변경 요청 목록/상세
+key_pending() {
+    local username="${1:-}"
+
+    if [[ ! -d "$KEY_CHANGE_DIR" ]] || [[ -z "$(ls -A "$KEY_CHANGE_DIR" 2>/dev/null)" ]]; then
+        echo "대기 중인 키 변경 요청이 없습니다."
+        exit 0
+    fi
+
+    # 특정 사용자 상세 조회
+    if [[ -n "$username" ]]; then
+        local found=false
+        for req_file in "$KEY_CHANGE_DIR"/*.json; do
+            [[ ! -f "$req_file" ]] && continue
+            local req_username status
+            req_username=$(jq -r '.username' "$req_file" 2>/dev/null)
+            status=$(jq -r '.status' "$req_file" 2>/dev/null)
+            if [[ "$req_username" == "$username" ]] && [[ "$status" == "pending" ]]; then
+                echo "=== 키 변경 요청 상세: $username ==="
+                echo ""
+                echo "요청 ID: $(jq -r '.id' "$req_file")"
+                echo "사용자명: $req_username"
+                echo "이메일: $(jq -r '.email' "$req_file")"
+                echo "변경 사유: $(jq -r '.reason // "-"' "$req_file")"
+                echo "요청일: $(jq -r '.created_at' "$req_file")"
+                echo ""
+                echo "새 공개키:"
+                jq -r '.new_public_key' "$req_file"
+                found=true
+                break
+            fi
+        done
+
+        if [[ "$found" == false ]]; then
+            log_error "대기 중인 키 변경 요청을 찾을 수 없습니다: $username"
+            exit 1
+        fi
+        return
+    fi
+
+    # 전체 목록 조회
+    local count=0
+    local pending_list=""
+
+    for req_file in "$KEY_CHANGE_DIR"/*.json; do
+        [[ ! -f "$req_file" ]] && continue
+        local status
+        status=$(jq -r '.status' "$req_file" 2>/dev/null)
+        if [[ "$status" == "pending" ]]; then
+            ((count++)) || true
+            local uname email reason created_at
+            uname=$(jq -r '.username' "$req_file")
+            email=$(jq -r '.email' "$req_file")
+            reason=$(jq -r '.reason // "-"' "$req_file")
+            created_at=$(jq -r '.created_at' "$req_file" | cut -d'T' -f1)
+            pending_list+="$uname|$email|$reason|$created_at\n"
+        fi
+    done
+
+    if [[ $count -eq 0 ]]; then
+        echo "대기 중인 키 변경 요청이 없습니다."
+        exit 0
+    fi
+
+    echo "대기 중인 키 변경 요청 (${count}건)"
+    echo ""
+    print_table_header "%-15s %-25s %-20s %s" "USERNAME" "EMAIL" "REASON" "CREATED"
+    echo -e "$pending_list" | while IFS='|' read -r uname email reason created_at; do
+        [[ -z "$uname" ]] && continue
+        print_table_row "%-15s %-25s %-20s %s" "$uname" "$email" "$reason" "$created_at"
+    done
+}
+
+# 키 변경 요청 승인
+key_approve() {
+    local username="${1:-}"
+
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin key approve <username>"
+        exit 1
+    fi
+
+    # 요청 파일 찾기
+    local req_file=""
+    for f in "$KEY_CHANGE_DIR"/*.json; do
+        [[ ! -f "$f" ]] && continue
+        local req_username status
+        req_username=$(jq -r '.username' "$f" 2>/dev/null)
+        status=$(jq -r '.status' "$f" 2>/dev/null)
+        if [[ "$req_username" == "$username" ]] && [[ "$status" == "pending" ]]; then
+            req_file="$f"
+            break
+        fi
+    done
+
+    if [[ -z "$req_file" ]]; then
+        log_error "대기 중인 키 변경 요청을 찾을 수 없습니다: $username"
+        exit 1
+    fi
+
+    # 사용자 존재 확인
+    if ! id "$username" &> /dev/null; then
+        log_error "시스템 사용자가 존재하지 않습니다: $username"
+        exit 1
+    fi
+
+    # 새 공개키 추출
+    local new_public_key
+    new_public_key=$(jq -r '.new_public_key' "$req_file")
+
+    log_info "키 변경 요청 승인 중: $username"
+
+    # SSH 키 업데이트
+    local ssh_dir="/home/$username/.ssh"
+    echo "$new_public_key" > "$ssh_dir/authorized_keys"
+    chmod 600 "$ssh_dir/authorized_keys"
+    chown "$username:$username" "$ssh_dir/authorized_keys"
+    log_success "SSH 키 업데이트 완료"
+
+    # 요청 상태 업데이트
+    local timestamp
+    timestamp=$(get_timestamp)
+    jq --arg by "$(get_current_user)" --arg at "$timestamp" \
+       '.status = "approved" | .processed_by = $by | .processed_at = $at' \
+       "$req_file" > "$req_file.tmp" && mv "$req_file.tmp" "$req_file"
+
+    audit_log "KEY_APPROVE" "$username" ""
+
+    log_success "키 변경 요청 승인 완료: $username"
+}
+
+# 키 변경 요청 거부
+key_reject() {
+    local username=""
+    local reason=""
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --reason)
+                reason="$2"
+                shift 2
+                ;;
+            -*)
+                log_error "알 수 없는 옵션: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$username" ]]; then
+                    username="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin key reject <username> [--reason <reason>]"
+        exit 1
+    fi
+
+    # 요청 파일 찾기
+    local req_file=""
+    for f in "$KEY_CHANGE_DIR"/*.json; do
+        [[ ! -f "$f" ]] && continue
+        local req_username status
+        req_username=$(jq -r '.username' "$f" 2>/dev/null)
+        status=$(jq -r '.status' "$f" 2>/dev/null)
+        if [[ "$req_username" == "$username" ]] && [[ "$status" == "pending" ]]; then
+            req_file="$f"
+            break
+        fi
+    done
+
+    if [[ -z "$req_file" ]]; then
+        log_error "대기 중인 키 변경 요청을 찾을 수 없습니다: $username"
+        exit 1
+    fi
+
+    # 확인
+    if ! prompt_confirm "정말로 '$username'의 키 변경 요청을 거부하시겠습니까?"; then
+        log_info "취소되었습니다"
+        exit 0
+    fi
+
+    # 요청 상태 업데이트
+    local timestamp
+    timestamp=$(get_timestamp)
+    jq --arg by "$(get_current_user)" --arg at "$timestamp" --arg reason "$reason" \
+       '.status = "rejected" | .processed_by = $by | .processed_at = $at | .reject_reason = $reason' \
+       "$req_file" > "$req_file.tmp" && mv "$req_file.tmp" "$req_file"
+
+    audit_log "KEY_REJECT" "$username" "reason=$reason"
+
+    log_success "키 변경 요청 거부됨: $username"
+    if [[ -n "$reason" ]]; then
+        echo "사유: $reason"
+    fi
+}
+
+# ============================================
 # 메인 함수
 # ============================================
 
@@ -787,6 +1002,27 @@ main() {
                 *)
                     log_error "알 수 없는 user 명령: $subcommand"
                     echo "사용 가능한 명령: add, list, show, delete, pending, approve, reject"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        key)
+            local subcommand="${1:-}"
+            shift || true
+
+            case "$subcommand" in
+                pending)
+                    key_pending "$@"
+                    ;;
+                approve)
+                    key_approve "$@"
+                    ;;
+                reject)
+                    key_reject "$@"
+                    ;;
+                *)
+                    log_error "알 수 없는 key 명령: $subcommand"
+                    echo "사용 가능한 명령: pending, approve, reject"
                     exit 1
                     ;;
             esac
