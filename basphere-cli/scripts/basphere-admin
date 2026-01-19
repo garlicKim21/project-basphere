@@ -7,7 +7,8 @@
 # 명령어:
 #   user list                             사용자 목록
 #   user show <username>                  사용자 정보 조회
-#   user delete <username>                사용자 삭제
+#   user delete <username>                사용자 삭제 (VM 없는 경우만)
+#   user purge <username>                 사용자 완전 삭제 (모든 VM, IP 포함)
 #   user pending [username]               대기 중인 등록 요청 목록/상세
 #   user approve <username>               등록 요청 승인
 #   user reject <username> [--reason]     등록 요청 거부
@@ -43,7 +44,8 @@ Basphere 관리자 CLI v${VERSION}
 명령어:
   user list                             사용자 목록
   user show <username>                  사용자 정보 조회
-  user delete <username>                사용자 삭제
+  user delete <username>                사용자 삭제 (VM 없는 경우만)
+  user purge <username>                 사용자 완전 삭제 (모든 VM, IP 포함)
   user pending [username]               대기 중인 등록 요청 목록/상세
   user approve <username>               등록 요청 승인 (계정 생성)
   user reject <username> [--reason]     등록 요청 거부
@@ -521,6 +523,143 @@ user_delete() {
     log_success "사용자 삭제 완료: $username"
 }
 
+# 사용자 완전 삭제 (모든 리소스 포함)
+user_purge() {
+    local username="${1:-}"
+
+    if [[ -z "$username" ]]; then
+        log_error "사용자 이름이 필요합니다"
+        echo "사용법: basphere-admin user purge <username>"
+        exit 1
+    fi
+
+    if ! user_exists "$username"; then
+        log_error "사용자를 찾을 수 없습니다: $username"
+        exit 1
+    fi
+
+    # 리소스 현황 확인
+    local tf_dir="$BASPHERE_DATA_DIR/terraform/$username"
+    local vm_count=0
+    local vm_list=""
+    if [[ -d "$tf_dir" ]]; then
+        for vm_dir in "$tf_dir"/*/; do
+            [[ ! -d "$vm_dir" ]] && continue
+            local vm_name
+            vm_name=$(basename "$vm_dir")
+            [[ "$vm_name" == "_folder" ]] && continue
+            ((vm_count++)) || true
+            vm_list+="    - $vm_name\n"
+        done
+    fi
+
+    # 경고 메시지
+    echo ""
+    log_warn "=== 주의: 완전 삭제 (PURGE) ==="
+    echo ""
+    echo "다음 항목이 모두 삭제됩니다:"
+    echo "  - 사용자: $username"
+    if [[ $vm_count -gt 0 ]]; then
+        echo "  - VM ${vm_count}개:"
+        echo -e "$vm_list"
+    fi
+    echo "  - IP 블록 할당 (재할당 가능해짐)"
+    echo "  - vSphere 폴더"
+    echo "  - 모든 사용자 데이터"
+    echo ""
+    log_warn "이 작업은 되돌릴 수 없습니다!"
+    echo ""
+
+    # 이중 확인
+    if ! prompt_confirm "정말로 '$username' 사용자와 모든 리소스를 삭제하시겠습니까?"; then
+        log_info "취소되었습니다"
+        exit 0
+    fi
+
+    echo ""
+    read -p "확인을 위해 사용자명 '$username'을 입력하세요: " confirm_username
+    if [[ "$confirm_username" != "$username" ]]; then
+        log_error "사용자명이 일치하지 않습니다. 취소합니다."
+        exit 1
+    fi
+
+    log_info "사용자 완전 삭제 시작: $username"
+
+    # 1. 모든 VM 삭제
+    if [[ $vm_count -gt 0 ]]; then
+        log_info "VM 삭제 중 ($vm_count개)..."
+        for vm_dir in "$tf_dir"/*/; do
+            [[ ! -d "$vm_dir" ]] && continue
+            local vm_name
+            vm_name=$(basename "$vm_dir")
+            [[ "$vm_name" == "_folder" ]] && continue
+
+            log_info "  VM 삭제 중: $vm_name"
+
+            # Terraform destroy
+            (
+                cd "$vm_dir"
+                if [[ -f "$BASPHERE_VSPHERE_ENV" ]]; then
+                    set -a
+                    source "$BASPHERE_VSPHERE_ENV"
+                    set +a
+                fi
+                if terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
+                    log_success "    VM 삭제 완료: $vm_name"
+                else
+                    log_warn "    VM 삭제 실패: $vm_name (로그: $vm_dir/terraform-destroy.log)"
+                fi
+            )
+        done
+    fi
+
+    # 2. vSphere 사용자 폴더 삭제
+    delete_vsphere_user_folder "$username"
+
+    # 3. IP 블록 해제 (allocations.tsv에서 제거)
+    local ipam_file="$BASPHERE_DATA_DIR/ipam/allocations.tsv"
+    if [[ -f "$ipam_file" ]]; then
+        log_info "IP 블록 해제 중..."
+        # 해당 사용자 라인 제거 (주석 라인은 유지)
+        grep -v "^${username}	" "$ipam_file" > "$ipam_file.tmp" 2>/dev/null || true
+        mv "$ipam_file.tmp" "$ipam_file"
+        log_success "IP 블록 해제 완료"
+    fi
+
+    # 4. IP 개별 할당 해제 (leases.tsv에서 제거)
+    local leases_file="$BASPHERE_DATA_DIR/ipam/leases.tsv"
+    if [[ -f "$leases_file" ]]; then
+        # username 컬럼(2번째)이 해당 사용자인 라인 제거
+        grep -v "	${username}	" "$leases_file" > "$leases_file.tmp" 2>/dev/null || true
+        mv "$leases_file.tmp" "$leases_file"
+    fi
+
+    # 5. Basphere 데이터 삭제
+    rm -rf "$BASPHERE_DATA_DIR/users/$username"
+    rm -rf "$BASPHERE_DATA_DIR/terraform/$username"
+    rm -rf "$BASPHERE_DATA_DIR/clusters/$username"
+    log_success "Basphere 데이터 삭제 완료"
+
+    # 6. 시스템 사용자 삭제
+    if id "$username" &> /dev/null; then
+        userdel -r "$username" 2>/dev/null || userdel "$username"
+        log_success "시스템 사용자 삭제 완료"
+    fi
+
+    # 감사 로그
+    audit_log "USER_PURGE" "$username" "vms=$vm_count"
+
+    echo ""
+    log_success "사용자 완전 삭제 완료: $username"
+    echo ""
+    echo "삭제된 항목:"
+    echo "  - 시스템 사용자"
+    echo "  - VM ${vm_count}개"
+    echo "  - IP 블록 (재할당 가능)"
+    echo "  - vSphere 폴더"
+    echo "  - 모든 사용자 데이터"
+}
+
 # 대기 중인 요청 목록/상세
 user_pending() {
     local username="${1:-}"
@@ -990,6 +1129,9 @@ main() {
                 delete)
                     user_delete "$@"
                     ;;
+                purge)
+                    user_purge "$@"
+                    ;;
                 pending)
                     user_pending "$@"
                     ;;
@@ -1001,7 +1143,7 @@ main() {
                     ;;
                 *)
                     log_error "알 수 없는 user 명령: $subcommand"
-                    echo "사용 가능한 명령: add, list, show, delete, pending, approve, reject"
+                    echo "사용 가능한 명령: list, show, delete, purge, pending, approve, reject"
                     exit 1
                     ;;
             esac
