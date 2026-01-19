@@ -42,14 +42,18 @@ project-basphere/
 │   ├── config/             # 설정 파일 예시
 │   └── install.sh          # 설치 스크립트
 │
-└── basphere-api/           # Go 기반 REST API 서버
-    ├── cmd/basphere-api/   # 서버 진입점
-    ├── internal/
-    │   ├── handler/        # HTTP 핸들러
-    │   ├── model/          # 데이터 모델
-    │   ├── store/          # 저장소 (파일 기반, 향후 DB)
-    │   └── provisioner/    # bash 스크립트 호출
-    └── web/templates/      # HTML 템플릿 (등록 폼)
+├── basphere-api/           # Go 기반 REST API 서버
+│   ├── cmd/basphere-api/   # 서버 진입점
+│   ├── internal/
+│   │   ├── handler/        # HTTP 핸들러
+│   │   ├── model/          # 데이터 모델
+│   │   ├── store/          # 저장소 (파일 기반, 향후 DB)
+│   │   └── provisioner/    # bash 스크립트 호출
+│   └── web/templates/      # HTML 템플릿 (등록 폼)
+│
+└── deploy/                 # 배포 설정
+    ├── nginx/              # nginx 리버스 프록시 설정
+    └── systemd/            # systemd 서비스 파일
 ```
 
 ## 기술 스택
@@ -177,6 +181,8 @@ delete-vm test
 - [x] 5단계 VM 스펙 (tiny, small, medium, large, huge)
 - [x] **API 기반 VM 관리** - CLI → API → Terraform 아키텍처
 - [x] **vSphere 인증 정보 보호** - vsphere.env 600 권한
+- [x] **nginx 리버스 프록시** - 내부 API 외부 차단, 공개 엔드포인트만 노출
+- [x] **Google reCAPTCHA v2** - 등록 폼 봇 방지
 
 ### VM 스펙
 
