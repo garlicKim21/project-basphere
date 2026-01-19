@@ -17,6 +17,8 @@ type Provisioner interface {
 	// User management
 	CreateUser(req *model.RegistrationRequest) error
 	UserExists(username string) (bool, error)
+	UpdateUserKey(username, newPublicKey string) error
+	GetUserEmail(username string) (string, error)
 
 	// VM management
 	CreateVM(username string, input *model.CreateVMInput) (*model.VM, error)
@@ -94,6 +96,68 @@ func (p *BashProvisioner) UserExists(username string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// UpdateUserKey updates the SSH public key for a user
+func (p *BashProvisioner) UpdateUserKey(username, newPublicKey string) error {
+	// Get user home directory
+	cmd := exec.Command("getent", "passwd", username)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("user not found: %s", username)
+	}
+
+	// Parse home directory from passwd entry (username:x:uid:gid:gecos:home:shell)
+	parts := strings.Split(strings.TrimSpace(stdout.String()), ":")
+	if len(parts) < 6 {
+		return fmt.Errorf("invalid passwd entry for user: %s", username)
+	}
+	homeDir := parts[5]
+
+	// Write new public key to authorized_keys
+	sshDir := filepath.Join(homeDir, ".ssh")
+	authorizedKeysPath := filepath.Join(sshDir, "authorized_keys")
+
+	// Ensure SSH directory exists with correct permissions
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return fmt.Errorf("failed to create .ssh directory: %w", err)
+	}
+
+	// Write the new public key
+	if err := os.WriteFile(authorizedKeysPath, []byte(newPublicKey+"\n"), 0600); err != nil {
+		return fmt.Errorf("failed to write authorized_keys: %w", err)
+	}
+
+	// Fix ownership using chown command (since we're running as root)
+	chownCmd := exec.Command("chown", "-R", username+":"+username, sshDir)
+	if err := chownCmd.Run(); err != nil {
+		return fmt.Errorf("failed to set ownership: %w", err)
+	}
+
+	return nil
+}
+
+// GetUserEmail retrieves the email from the user's registration record
+func (p *BashProvisioner) GetUserEmail(username string) (string, error) {
+	// Try to read from user's metadata file
+	metadataPath := filepath.Join(p.dataDir, "users", username+".json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("user metadata not found: %s", username)
+		}
+		return "", fmt.Errorf("failed to read user metadata: %w", err)
+	}
+
+	var metadata struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("failed to parse user metadata: %w", err)
+	}
+
+	return metadata.Email, nil
 }
 
 // CreateVM creates a new VM for the user
@@ -265,6 +329,23 @@ func (p *MockProvisioner) CreateUser(req *model.RegistrationRequest) error {
 // UserExists mock implementation
 func (p *MockProvisioner) UserExists(username string) (bool, error) {
 	return p.Users[username], nil
+}
+
+// UpdateUserKey mock implementation
+func (p *MockProvisioner) UpdateUserKey(username, newPublicKey string) error {
+	if !p.Users[username] {
+		return fmt.Errorf("user not found: %s", username)
+	}
+	// In mock, just succeed if user exists
+	return nil
+}
+
+// GetUserEmail mock implementation
+func (p *MockProvisioner) GetUserEmail(username string) (string, error) {
+	if !p.Users[username] {
+		return "", fmt.Errorf("user not found: %s", username)
+	}
+	return username + "@example.com", nil
 }
 
 // CreateVM mock implementation

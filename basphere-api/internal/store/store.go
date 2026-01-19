@@ -27,4 +27,7 @@ type Store interface {
 
 	// ExistsUsername checks if a username already has a pending request
 	ExistsUsername(username string) (bool, error)
+
+	// ExistsEmail checks if an email already has a pending request
+	ExistsEmail(email string) (bool, error)
 }

@@ -132,3 +132,49 @@ type RejectInput struct {
 	ProcessedBy string `json:"processed_by"`
 	Reason      string `json:"reason"`
 }
+
+// KeyChangeRequest represents a request to change SSH public key
+type KeyChangeRequest struct {
+	ID           string        `json:"id"`
+	Username     string        `json:"username"`
+	Email        string        `json:"email"`
+	NewPublicKey string        `json:"new_public_key"`
+	Reason       string        `json:"reason,omitempty"` // Why changing key (lost, rotation, etc.)
+	Status       RequestStatus `json:"status"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	ProcessedBy  string        `json:"processed_by,omitempty"`
+	ProcessedAt  string        `json:"processed_at,omitempty"`
+	RejectReason string        `json:"reject_reason,omitempty"`
+}
+
+// KeyChangeInput represents the input for key change request
+type KeyChangeInput struct {
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	NewPublicKey string `json:"new_public_key"`
+	Reason       string `json:"reason"`
+}
+
+// Validate validates the key change input
+func (k *KeyChangeInput) Validate() []string {
+	var errors []string
+
+	if k.Username == "" {
+		errors = append(errors, "사용자명을 입력해주세요")
+	}
+
+	if k.Email == "" {
+		errors = append(errors, "이메일을 입력해주세요")
+	} else if !isValidEmail(k.Email) {
+		errors = append(errors, "올바른 이메일 형식이 아닙니다")
+	}
+
+	if k.NewPublicKey == "" {
+		errors = append(errors, "새 SSH 공개키를 입력해주세요")
+	} else if !isValidSSHPublicKey(k.NewPublicKey) {
+		errors = append(errors, "올바른 SSH 공개키 형식이 아닙니다")
+	}
+
+	return errors
+}

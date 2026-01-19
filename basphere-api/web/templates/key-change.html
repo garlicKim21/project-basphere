@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basphere - SSH 키 변경 요청</title>
+    {{if .RecaptchaSiteKey}}
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    {{end}}
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 500px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            color: #333;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .logo p {
+            color: #666;
+            margin-top: 8px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #333;
+            font-weight: 500;
+        }
+        label .required {
+            color: #e53e3e;
+        }
+        input[type="text"],
+        input[type="email"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #4a90d9;
+        }
+        textarea {
+            height: 120px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+        textarea.reason {
+            height: 80px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        .hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .hint code {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+        .help-link {
+            font-weight: normal;
+            font-size: 12px;
+            color: #4a90d9;
+            text-decoration: none;
+            margin-left: 8px;
+        }
+        .help-link:hover {
+            text-decoration: underline;
+        }
+        .errors {
+            background: #fff5f5;
+            border: 1px solid #feb2b2;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 20px;
+        }
+        .errors ul {
+            list-style: none;
+            color: #c53030;
+        }
+        .errors li {
+            margin-bottom: 4px;
+        }
+        .errors li:last-child {
+            margin-bottom: 0;
+        }
+        .warning-box {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 20px;
+        }
+        .warning-box p {
+            color: #92400e;
+            font-size: 14px;
+            margin: 0;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #3a7fc8;
+        }
+        button:active {
+            background: #2a6eb8;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            color: #888;
+            font-size: 12px;
+        }
+        .footer a {
+            color: #4a90d9;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Basphere</h1>
+            <p>SSH 키 변경 요청</p>
+        </div>
+
+        <div class="warning-box">
+            <p>SSH 키 분실 또는 보안상의 이유로 키를 변경해야 하는 경우 이 양식을 사용하세요.
+            관리자 승인 후 새 키가 적용됩니다.</p>
+        </div>
+
+        {{if .Errors}}
+        <div class="errors">
+            <ul>
+                {{range .Errors}}
+                <li>{{.}}</li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+
+        <form method="POST" action="/key-change">
+            <div class="form-group">
+                <label for="username">사용자명 <span class="required">*</span></label>
+                <input type="text" id="username" name="username"
+                       value="{{if .Input}}{{.Input.Username}}{{end}}"
+                       placeholder="기존에 등록한 사용자명" required>
+                <p class="hint">Bastion 서버에 등록된 사용자명을 입력하세요</p>
+            </div>
+
+            <div class="form-group">
+                <label for="email">등록된 이메일 <span class="required">*</span></label>
+                <input type="email" id="email" name="email"
+                       value="{{if .Input}}{{.Input.Email}}{{end}}"
+                       placeholder="등록 시 사용한 이메일" required>
+                <p class="hint">본인 확인을 위해 등록 시 사용한 이메일을 입력하세요</p>
+            </div>
+
+            <div class="form-group">
+                <label for="new_public_key">
+                    새 SSH 공개키 <span class="required">*</span>
+                    <a href="/ssh-guide" target="_blank" class="help-link">SSH 키 만들기 가이드</a>
+                </label>
+                <textarea id="new_public_key" name="new_public_key"
+                          placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@host"
+                          required>{{if .Input}}{{.Input.NewPublicKey}}{{end}}</textarea>
+                <p class="hint">
+                    새로 생성한 SSH 공개키를 입력하세요.<br>
+                    <code>cat ~/.ssh/id_ed25519.pub</code> (macOS/Linux)
+                </p>
+            </div>
+
+            <div class="form-group">
+                <label for="reason">변경 사유</label>
+                <textarea id="reason" name="reason" class="reason"
+                          placeholder="예: 개인키 분실, 정기 키 로테이션 등">{{if .Input}}{{.Input.Reason}}{{end}}</textarea>
+            </div>
+
+            {{if .RecaptchaSiteKey}}
+            <div class="form-group">
+                <div class="g-recaptcha" data-sitekey="{{.RecaptchaSiteKey}}"></div>
+            </div>
+            {{end}}
+
+            <button type="submit">키 변경 요청</button>
+        </form>
+
+        <div class="footer">
+            키 변경 요청 후 관리자 승인이 필요합니다<br>
+            <a href="/register">신규 사용자 등록</a>
+        </div>
+    </div>
+</body>
+</html>

@@ -12,6 +12,7 @@ type Config struct {
 	Storage     StorageConfig     `yaml:"storage"`
 	Provisioner ProvisionerConfig `yaml:"provisioner"`
 	Recaptcha   RecaptchaConfig   `yaml:"recaptcha"`
+	Validation  ValidationConfig  `yaml:"validation"`
 }
 
 // RecaptchaConfig represents the reCAPTCHA configuration
@@ -19,6 +20,12 @@ type RecaptchaConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	SiteKey   string `yaml:"site_key"`
 	SecretKey string `yaml:"secret_key"`
+}
+
+// ValidationConfig represents the validation configuration
+type ValidationConfig struct {
+	// Allowed email domains (empty = allow all)
+	AllowedEmailDomains []string `yaml:"allowed_email_domains"`
 }
 
 // ServerConfig represents the HTTP server configuration

@@ -72,6 +72,12 @@ sudo apt install -y nginx
 # 기본 설정 비활성화
 sudo rm -f /etc/nginx/sites-enabled/default
 
+# Rate limiting zone 추가 (http 블록 안에)
+sudo vim /etc/nginx/nginx.conf
+# http 블록 안에 다음 추가:
+#   limit_req_zone $binary_remote_addr zone=basphere_general:10m rate=10r/s;
+#   limit_req_zone $binary_remote_addr zone=basphere_register:10m rate=1r/s;
+
 # Basphere 설정 복사
 sudo cp /opt/basphere/deploy/nginx/basphere.conf /etc/nginx/sites-available/basphere
 sudo ln -s /etc/nginx/sites-available/basphere /etc/nginx/sites-enabled/
@@ -117,7 +123,9 @@ nginx 리버스 프록시 설정:
 - 공개 엔드포인트만 외부에 노출
 - 내부 API (VM 관리, 할당량 등)는 차단
 - 보안 헤더 추가
-- Rate limiting 지원 (주석 처리됨)
+- Rate limiting 적용:
+  - 일반 요청: 10r/s (초당 10개 요청)
+  - 등록 API: 1r/s (초당 1개 요청, 봇 방지)
 
 ### systemd/basphere-api.service
 

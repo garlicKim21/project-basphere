@@ -138,6 +138,14 @@ func (s *FileStore) ExistsUsername(username string) (bool, error) {
 	return s.existsUsernameUnsafe(username)
 }
 
+// ExistsEmail checks if an email already has a pending request
+func (s *FileStore) ExistsEmail(email string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.existsEmailUnsafe(email)
+}
+
 // Internal methods (not thread-safe, must be called with lock held)
 
 func (s *FileStore) readRequest(id string) (*model.RegistrationRequest, error) {
@@ -211,6 +219,21 @@ func (s *FileStore) existsUsernameUnsafe(username string) (bool, error) {
 
 	for _, req := range requests {
 		if req.Username == username && req.Status == model.StatusPending {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (s *FileStore) existsEmailUnsafe(email string) (bool, error) {
+	requests, err := s.listAllUnsafe()
+	if err != nil {
+		return false, err
+	}
+
+	for _, req := range requests {
+		if req.Email == email && req.Status == model.StatusPending {
 			return true, nil
 		}
 	}

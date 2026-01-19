@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,14 +23,15 @@ import (
 
 // Handler handles HTTP requests
 type Handler struct {
-	store       store.Store
-	provisioner provisioner.Provisioner
-	templates   *template.Template
-	config      *config.Config
+	store          store.Store
+	keyChangeStore *store.KeyChangeStore
+	provisioner    provisioner.Provisioner
+	templates      *template.Template
+	config         *config.Config
 }
 
 // NewHandler creates a new handler
-func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir string, cfg *config.Config) (*Handler, error) {
+func NewHandler(s store.Store, prov provisioner.Provisioner, templateDir string, cfg *config.Config) (*Handler, error) {
 	tmpl, err := template.ParseGlob(filepath.Join(templateDir, "*.html"))
 	if err != nil {
 		// Templates might not exist yet, that's okay
@@ -37,11 +39,18 @@ func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir str
 		tmpl = template.New("empty")
 	}
 
+	// Initialize key change store in the same base directory
+	keyChangeStore, err := store.NewKeyChangeStore(cfg.Storage.PendingDir)
+	if err != nil {
+		log.Printf("Warning: failed to initialize key change store: %v", err)
+	}
+
 	return &Handler{
-		store:       store,
-		provisioner: prov,
-		templates:   tmpl,
-		config:      cfg,
+		store:          s,
+		keyChangeStore: keyChangeStore,
+		provisioner:    prov,
+		templates:      tmpl,
+		config:         cfg,
 	}, nil
 }
 
@@ -62,6 +71,9 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/register", h.registerFormSubmit)
 	r.Get("/success", h.successPage)
 	r.Get("/ssh-guide", h.sshGuidePage)
+	r.Get("/key-change", h.keyChangePage)
+	r.Post("/key-change", h.keyChangeFormSubmit)
+	r.Get("/key-change-success", h.keyChangeSuccessPage)
 
 	// API routes (JSON)
 	r.Route("/api/v1", func(r chi.Router) {
@@ -71,6 +83,13 @@ func (h *Handler) Router() http.Handler {
 		r.Get("/pending/{username}", h.apiGetPending)
 		r.Post("/users/{username}/approve", h.apiApprove)
 		r.Post("/users/{username}/reject", h.apiReject)
+
+		// Key change requests
+		r.Post("/key-change", h.apiKeyChangeRequest)
+		r.Get("/key-changes", h.apiListKeyChanges)
+		r.Get("/key-changes/{username}", h.apiGetKeyChange)
+		r.Post("/key-changes/{username}/approve", h.apiApproveKeyChange)
+		r.Post("/key-changes/{username}/reject", h.apiRejectKeyChange)
 
 		// VM management
 		r.Post("/vms", h.apiCreateVM)
@@ -200,6 +219,12 @@ func (h *Handler) registerFormSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate email domain
+	if err := h.validateEmailDomain(input.Email); err != nil {
+		renderWithErrors([]string{err.Error()})
+		return
+	}
+
 	// Create registration request
 	req, err := h.createRegistrationRequest(input)
 	if err != nil {
@@ -245,6 +270,28 @@ func (h *Handler) verifyRecaptcha(response string) bool {
 	return result.Success
 }
 
+// validateEmailDomain checks if the email domain is allowed
+func (h *Handler) validateEmailDomain(email string) error {
+	allowedDomains := h.config.Validation.AllowedEmailDomains
+	if len(allowedDomains) == 0 {
+		return nil // No restriction
+	}
+
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid email format")
+	}
+
+	domain := strings.ToLower(parts[1])
+	for _, allowed := range allowedDomains {
+		if strings.ToLower(allowed) == domain {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("이메일 도메인 '%s'는 허용되지 않습니다. 허용된 도메인: %s", domain, strings.Join(allowedDomains, ", "))
+}
+
 // API handlers
 
 func (h *Handler) apiRegister(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +303,12 @@ func (h *Handler) apiRegister(w http.ResponseWriter, r *http.Request) {
 
 	if errors := input.Validate(); len(errors) > 0 {
 		h.jsonError(w, http.StatusBadRequest, "Validation failed", errors...)
+		return
+	}
+
+	// Validate email domain
+	if err := h.validateEmailDomain(input.Email); err != nil {
+		h.jsonError(w, http.StatusBadRequest, "Validation failed", err.Error())
 		return
 	}
 
@@ -385,7 +438,16 @@ func (h *Handler) createRegistrationRequest(input *model.RegisterInput) (*model.
 		return nil, err
 	}
 	if exists {
-		return nil, fmt.Errorf("username %s already has a pending request", input.Username)
+		return nil, fmt.Errorf("사용자명 '%s'으로 이미 등록 요청이 있습니다", input.Username)
+	}
+
+	// Check if email already has pending request
+	emailExists, err := h.store.ExistsEmail(input.Email)
+	if err != nil {
+		return nil, err
+	}
+	if emailExists {
+		return nil, fmt.Errorf("이메일 '%s'으로 이미 등록 요청이 있습니다", input.Email)
 	}
 
 	// Check if system user already exists
@@ -394,7 +456,7 @@ func (h *Handler) createRegistrationRequest(input *model.RegisterInput) (*model.
 		return nil, err
 	}
 	if userExists {
-		return nil, fmt.Errorf("system user %s already exists", input.Username)
+		return nil, fmt.Errorf("사용자명 '%s'은 이미 사용 중입니다", input.Username)
 	}
 
 	now := time.Now()
@@ -418,4 +480,264 @@ func (h *Handler) createRegistrationRequest(input *model.RegisterInput) (*model.
 
 func generateID() string {
 	return "req-" + uuid.New().String()[:8]
+}
+
+func generateKeyChangeID() string {
+	return "keychange-" + uuid.New().String()[:8]
+}
+
+// Key change web pages
+
+func (h *Handler) keyChangePage(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{}
+	if h.config.Recaptcha.Enabled && h.config.Recaptcha.SiteKey != "" {
+		data["RecaptchaSiteKey"] = h.config.Recaptcha.SiteKey
+	}
+	if err := h.templates.ExecuteTemplate(w, "key-change.html", data); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) keyChangeSuccessPage(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	if err := h.templates.ExecuteTemplate(w, "key-change-success.html", map[string]string{
+		"Username": username,
+	}); err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) keyChangeFormSubmit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	input := &model.KeyChangeInput{
+		Username:     r.FormValue("username"),
+		Email:        r.FormValue("email"),
+		NewPublicKey: r.FormValue("new_public_key"),
+		Reason:       r.FormValue("reason"),
+	}
+
+	renderWithErrors := func(errors []string) {
+		data := map[string]interface{}{
+			"Errors": errors,
+			"Input":  input,
+		}
+		if h.config.Recaptcha.Enabled && h.config.Recaptcha.SiteKey != "" {
+			data["RecaptchaSiteKey"] = h.config.Recaptcha.SiteKey
+		}
+		if err := h.templates.ExecuteTemplate(w, "key-change.html", data); err != nil {
+			http.Error(w, "Template error", http.StatusInternalServerError)
+		}
+	}
+
+	// Verify reCAPTCHA if enabled
+	if h.config.Recaptcha.Enabled {
+		recaptchaResponse := r.FormValue("g-recaptcha-response")
+		if recaptchaResponse == "" {
+			renderWithErrors([]string{"reCAPTCHA를 완료해주세요"})
+			return
+		}
+		if !h.verifyRecaptcha(recaptchaResponse) {
+			renderWithErrors([]string{"reCAPTCHA 검증에 실패했습니다. 다시 시도해주세요"})
+			return
+		}
+	}
+
+	if errors := input.Validate(); len(errors) > 0 {
+		renderWithErrors(errors)
+		return
+	}
+
+	// Create key change request
+	req, err := h.createKeyChangeRequest(input)
+	if err != nil {
+		renderWithErrors([]string{err.Error()})
+		return
+	}
+
+	http.Redirect(w, r, "/key-change-success?username="+req.Username, http.StatusFound)
+}
+
+// createKeyChangeRequest creates a key change request after validation
+func (h *Handler) createKeyChangeRequest(input *model.KeyChangeInput) (*model.KeyChangeRequest, error) {
+	if h.keyChangeStore == nil {
+		return nil, fmt.Errorf("키 변경 기능이 비활성화되어 있습니다")
+	}
+
+	// Check if user exists
+	exists, err := h.provisioner.UserExists(input.Username)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("사용자 '%s'이(가) 존재하지 않습니다", input.Username)
+	}
+
+	// Verify email matches the registered email
+	registeredEmail, err := h.provisioner.GetUserEmail(input.Username)
+	if err != nil {
+		// If we can't get the email, allow the request but note in logs
+		log.Printf("Warning: could not verify email for user %s: %v", input.Username, err)
+	} else if registeredEmail != "" && registeredEmail != input.Email {
+		return nil, fmt.Errorf("입력한 이메일이 등록된 이메일과 일치하지 않습니다")
+	}
+
+	now := time.Now()
+	req := &model.KeyChangeRequest{
+		ID:           generateKeyChangeID(),
+		Username:     input.Username,
+		Email:        input.Email,
+		NewPublicKey: input.NewPublicKey,
+		Reason:       input.Reason,
+		Status:       model.StatusPending,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := h.keyChangeStore.Create(req); err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// Key change API handlers
+
+func (h *Handler) apiKeyChangeRequest(w http.ResponseWriter, r *http.Request) {
+	var input model.KeyChangeInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		h.jsonError(w, http.StatusBadRequest, "Invalid JSON", err.Error())
+		return
+	}
+
+	if errors := input.Validate(); len(errors) > 0 {
+		h.jsonError(w, http.StatusBadRequest, "Validation failed", errors...)
+		return
+	}
+
+	req, err := h.createKeyChangeRequest(&input)
+	if err != nil {
+		h.jsonError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "Key change request submitted", req)
+}
+
+func (h *Handler) apiListKeyChanges(w http.ResponseWriter, r *http.Request) {
+	if h.keyChangeStore == nil {
+		h.jsonError(w, http.StatusServiceUnavailable, "Key change feature is disabled")
+		return
+	}
+
+	status := model.StatusPending
+	requests, err := h.keyChangeStore.List(&status)
+	if err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to list requests", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "", requests)
+}
+
+func (h *Handler) apiGetKeyChange(w http.ResponseWriter, r *http.Request) {
+	if h.keyChangeStore == nil {
+		h.jsonError(w, http.StatusServiceUnavailable, "Key change feature is disabled")
+		return
+	}
+
+	username := chi.URLParam(r, "username")
+	req, err := h.keyChangeStore.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "", req)
+}
+
+func (h *Handler) apiApproveKeyChange(w http.ResponseWriter, r *http.Request) {
+	if h.keyChangeStore == nil {
+		h.jsonError(w, http.StatusServiceUnavailable, "Key change feature is disabled")
+		return
+	}
+
+	username := chi.URLParam(r, "username")
+
+	var input model.ApproveInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		input.ProcessedBy = "admin"
+	}
+
+	req, err := h.keyChangeStore.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	if req.Status != model.StatusPending {
+		h.jsonError(w, http.StatusBadRequest, "Request is not pending")
+		return
+	}
+
+	// Update the user's SSH key
+	if err := h.provisioner.UpdateUserKey(username, req.NewPublicKey); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to update SSH key", err.Error())
+		return
+	}
+
+	// Update request status
+	req.Status = model.StatusApproved
+	req.ProcessedBy = input.ProcessedBy
+	req.ProcessedAt = time.Now().Format(time.RFC3339)
+	req.UpdatedAt = time.Now()
+
+	if err := h.keyChangeStore.Update(req); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to update request", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "Key change approved and applied", req)
+}
+
+func (h *Handler) apiRejectKeyChange(w http.ResponseWriter, r *http.Request) {
+	if h.keyChangeStore == nil {
+		h.jsonError(w, http.StatusServiceUnavailable, "Key change feature is disabled")
+		return
+	}
+
+	username := chi.URLParam(r, "username")
+
+	var input model.RejectInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		input.ProcessedBy = "admin"
+	}
+
+	req, err := h.keyChangeStore.GetByUsername(username)
+	if err != nil {
+		h.jsonError(w, http.StatusNotFound, "Request not found", err.Error())
+		return
+	}
+
+	if req.Status != model.StatusPending {
+		h.jsonError(w, http.StatusBadRequest, "Request is not pending")
+		return
+	}
+
+	// Update request status
+	req.Status = model.StatusRejected
+	req.ProcessedBy = input.ProcessedBy
+	req.ProcessedAt = time.Now().Format(time.RFC3339)
+	req.RejectReason = input.Reason
+	req.UpdatedAt = time.Now()
+
+	if err := h.keyChangeStore.Update(req); err != nil {
+		h.jsonError(w, http.StatusInternalServerError, "Failed to update request", err.Error())
+		return
+	}
+
+	h.jsonSuccess(w, "Key change request rejected", req)
 }

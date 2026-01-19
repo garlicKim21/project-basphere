@@ -20,3 +20,10 @@ recaptcha:
   enabled: false
   site_key: ""      # 공개키 (HTML에 포함됨)
   secret_key: ""    # 비밀키 (서버에서만 사용)
+
+# 입력값 검증 설정
+validation:
+  # 허용된 이메일 도메인 목록 (비어있으면 모든 도메인 허용)
+  allowed_email_domains:
+    # - "company.com"
+    # - "basphere.dev"
