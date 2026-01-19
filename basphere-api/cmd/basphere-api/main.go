@@ -69,7 +69,7 @@ func main() {
 	templateDir := findTemplateDir()
 
 	// Initialize handler
-	h, err := handler.NewHandler(fileStore, prov, templateDir)
+	h, err := handler.NewHandler(fileStore, prov, templateDir, cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize handler: %v", err)
 	}

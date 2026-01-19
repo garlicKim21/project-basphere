@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
+	"github.com/basphere/basphere-api/internal/config"
 	"github.com/basphere/basphere-api/internal/model"
 	"github.com/basphere/basphere-api/internal/provisioner"
 	"github.com/basphere/basphere-api/internal/store"
@@ -23,10 +25,11 @@ type Handler struct {
 	store       store.Store
 	provisioner provisioner.Provisioner
 	templates   *template.Template
+	config      *config.Config
 }
 
 // NewHandler creates a new handler
-func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir string) (*Handler, error) {
+func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir string, cfg *config.Config) (*Handler, error) {
 	tmpl, err := template.ParseGlob(filepath.Join(templateDir, "*.html"))
 	if err != nil {
 		// Templates might not exist yet, that's okay
@@ -38,6 +41,7 @@ func NewHandler(store store.Store, prov provisioner.Provisioner, templateDir str
 		store:       store,
 		provisioner: prov,
 		templates:   tmpl,
+		config:      cfg,
 	}, nil
 }
 
@@ -127,7 +131,11 @@ func (h *Handler) indexPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) registerPage(w http.ResponseWriter, r *http.Request) {
-	if err := h.templates.ExecuteTemplate(w, "register.html", nil); err != nil {
+	data := map[string]interface{}{}
+	if h.config.Recaptcha.Enabled && h.config.Recaptcha.SiteKey != "" {
+		data["RecaptchaSiteKey"] = h.config.Recaptcha.SiteKey
+	}
+	if err := h.templates.ExecuteTemplate(w, "register.html", data); err != nil {
 		http.Error(w, "Template error", http.StatusInternalServerError)
 	}
 }
@@ -160,32 +168,75 @@ func (h *Handler) registerFormSubmit(w http.ResponseWriter, r *http.Request) {
 		PublicKey: r.FormValue("public_key"),
 	}
 
-	if errors := input.Validate(); len(errors) > 0 {
-		// Re-render form with errors
+	// Helper function to render form with errors
+	renderWithErrors := func(errors []string) {
 		data := map[string]interface{}{
 			"Errors": errors,
 			"Input":  input,
 		}
+		if h.config.Recaptcha.Enabled && h.config.Recaptcha.SiteKey != "" {
+			data["RecaptchaSiteKey"] = h.config.Recaptcha.SiteKey
+		}
 		if err := h.templates.ExecuteTemplate(w, "register.html", data); err != nil {
 			http.Error(w, "Template error", http.StatusInternalServerError)
 		}
+	}
+
+	// Verify reCAPTCHA if enabled
+	if h.config.Recaptcha.Enabled {
+		recaptchaResponse := r.FormValue("g-recaptcha-response")
+		if recaptchaResponse == "" {
+			renderWithErrors([]string{"reCAPTCHA를 완료해주세요"})
+			return
+		}
+		if !h.verifyRecaptcha(recaptchaResponse) {
+			renderWithErrors([]string{"reCAPTCHA 검증에 실패했습니다. 다시 시도해주세요"})
+			return
+		}
+	}
+
+	if errors := input.Validate(); len(errors) > 0 {
+		renderWithErrors(errors)
 		return
 	}
 
 	// Create registration request
 	req, err := h.createRegistrationRequest(input)
 	if err != nil {
-		data := map[string]interface{}{
-			"Errors": []string{err.Error()},
-			"Input":  input,
-		}
-		if err := h.templates.ExecuteTemplate(w, "register.html", data); err != nil {
-			http.Error(w, "Template error", http.StatusInternalServerError)
-		}
+		renderWithErrors([]string{err.Error()})
 		return
 	}
 
 	http.Redirect(w, r, "/success?username="+req.Username, http.StatusFound)
+}
+
+// verifyRecaptcha verifies the reCAPTCHA response with Google's API
+func (h *Handler) verifyRecaptcha(response string) bool {
+	if h.config.Recaptcha.SecretKey == "" {
+		log.Printf("Warning: reCAPTCHA secret key is not configured")
+		return false
+	}
+
+	resp, err := http.PostForm("https://www.google.com/recaptcha/api/siteverify",
+		url.Values{
+			"secret":   {h.config.Recaptcha.SecretKey},
+			"response": {response},
+		})
+	if err != nil {
+		log.Printf("Error verifying reCAPTCHA: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("Error decoding reCAPTCHA response: %v", err)
+		return false
+	}
+
+	return result.Success
 }
 
 // API handlers

@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Basphere - 사용자 등록 요청</title>
+    {{if .RecaptchaSiteKey}}
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    {{end}}
     <style>
         * {
             box-sizing: border-box;
@@ -192,6 +195,12 @@
                     <code>type %USERPROFILE%\.ssh\id_ed25519.pub</code> (Windows)
                 </p>
             </div>
+
+            {{if .RecaptchaSiteKey}}
+            <div class="form-group">
+                <div class="g-recaptcha" data-sitekey="{{.RecaptchaSiteKey}}"></div>
+            </div>
+            {{end}}
 
             <button type="submit">등록 요청</button>
         </form>

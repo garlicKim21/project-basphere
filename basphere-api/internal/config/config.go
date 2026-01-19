@@ -11,6 +11,14 @@ type Config struct {
 	Server      ServerConfig      `yaml:"server"`
 	Storage     StorageConfig     `yaml:"storage"`
 	Provisioner ProvisionerConfig `yaml:"provisioner"`
+	Recaptcha   RecaptchaConfig   `yaml:"recaptcha"`
+}
+
+// RecaptchaConfig represents the reCAPTCHA configuration
+type RecaptchaConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	SiteKey   string `yaml:"site_key"`
+	SecretKey string `yaml:"secret_key"`
 }
 
 // ServerConfig represents the HTTP server configuration

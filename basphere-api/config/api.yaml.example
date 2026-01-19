@@ -13,3 +13,10 @@ storage:
 provisioner:
   # basphere-admin 스크립트 경로
   admin_script: "/usr/local/bin/basphere-admin"
+
+# reCAPTCHA 설정 (선택사항)
+# https://www.google.com/recaptcha/admin 에서 발급
+recaptcha:
+  enabled: false
+  site_key: ""      # 공개키 (HTML에 포함됨)
+  secret_key: ""    # 비밀키 (서버에서만 사용)
