@@ -1,6 +1,3 @@
-# NOTE: 이 파일은 deploy/systemd/basphere-api.service로 이동했습니다.
-# 호환성을 위해 유지하고 있으나, 새 설치 시 deploy/ 디렉토리의 파일을 사용하세요.
-
 [Unit]
 Description=Basphere API Server
 Documentation=https://github.com/basphere/basphere-api

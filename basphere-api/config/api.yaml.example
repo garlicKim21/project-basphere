@@ -1,7 +1,9 @@
 # Basphere API Server Configuration
 
 server:
-  host: "0.0.0.0"
+  # 보안: localhost만 수신 (nginx 리버스 프록시 사용)
+  # 외부 직접 노출 시 0.0.0.0으로 변경 (권장하지 않음)
+  host: "127.0.0.1"
   port: 8080
 
 storage:
