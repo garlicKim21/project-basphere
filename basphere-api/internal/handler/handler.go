@@ -217,6 +217,8 @@ func (h *Handler) verifyRecaptcha(response string) bool {
 		return false
 	}
 
+	log.Printf("reCAPTCHA: Verifying response (length=%d)", len(response))
+
 	resp, err := http.PostForm("https://www.google.com/recaptcha/api/siteverify",
 		url.Values{
 			"secret":   {h.config.Recaptcha.SecretKey},
@@ -229,12 +231,16 @@ func (h *Handler) verifyRecaptcha(response string) bool {
 	defer resp.Body.Close()
 
 	var result struct {
-		Success bool `json:"success"`
+		Success    bool     `json:"success"`
+		ErrorCodes []string `json:"error-codes"`
+		Hostname   string   `json:"hostname"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("Error decoding reCAPTCHA response: %v", err)
 		return false
 	}
+
+	log.Printf("reCAPTCHA result: success=%v, hostname=%s, errors=%v", result.Success, result.Hostname, result.ErrorCodes)
 
 	return result.Success
 }
