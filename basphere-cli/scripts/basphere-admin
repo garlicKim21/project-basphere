@@ -361,7 +361,7 @@ user_list() {
         exit 0
     fi
 
-    print_table_header "%-12s %-25s %-12s %-4s %-8s %s" "USERNAME" "EMAIL" "TEAM" "VMs" "STATUS" "CREATED"
+    print_table_header "%-10s %-22s %-10s %-26s %-3s %-8s %s" "USERNAME" "EMAIL" "TEAM" "IP_BLOCK" "VMs" "STATUS" "CREATED"
 
     for user_dir in "$users_dir"/*/; do
         [[ ! -d "$user_dir" ]] && continue
@@ -372,13 +372,15 @@ user_list() {
         local metadata_file="$user_dir/metadata.json"
 
         if [[ -f "$metadata_file" ]]; then
-            local email team created_at status vm_count
+            local email team ip_block_start ip_block_range created_at status vm_count
 
             email=$(jq -r '.email // "-"' "$metadata_file")
             team=$(jq -r '.team // "-"' "$metadata_file")
             # 빈 문자열인 경우 "-"로 표시
             [[ -z "$email" ]] && email="-"
             [[ -z "$team" ]] && team="-"
+            ip_block_start=$(jq -r '.ip_block // "-"' "$metadata_file")
+            ip_block_range=$(format_ip_block_range "$ip_block_start")
             created_at=$(jq -r '.created_at // "-"' "$metadata_file" | cut -d'T' -f1)
             status=$(jq -r '.status // "active"' "$metadata_file")
 
@@ -390,7 +392,7 @@ user_list() {
                 vm_count=0
             fi
 
-            print_table_row "%-12s %-25s %-12s %-4s %-8s %s" "$username" "$email" "$team" "$vm_count" "$status" "$created_at"
+            print_table_row "%-10s %-22s %-10s %-26s %-3s %-8s %s" "$username" "$email" "$team" "$ip_block_range" "$vm_count" "$status" "$created_at"
         fi
     done
 }
