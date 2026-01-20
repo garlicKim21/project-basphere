@@ -225,18 +225,17 @@ delete-vm test
 ### 1. Bastion 서버 준비
 
 ```bash
-# Ubuntu 22.04 LTS 권장
+# Ubuntu 22.04/24.04 LTS 권장
 # 필수 사양: 2 vCPU, 4GB RAM, 50GB 디스크
 
 # 관리자 계정 생성
 sudo useradd -m -s /bin/bash basphere
 sudo passwd basphere
 
-# Git 저장소 클론
-sudo mkdir -p /opt/basphere
-sudo chown basphere:basphere /opt/basphere
-cd /opt/basphere
-git clone https://github.com/your-org/project-basphere.git .
+# Git 저장소 클론 (/opt에서 sudo 필요)
+cd /opt
+sudo git clone https://github.com/your-org/project-basphere.git basphere
+sudo chown -R basphere:basphere /opt/basphere
 ```
 
 ### 2. 환경별 설정 파일 수정
@@ -293,20 +292,22 @@ sudo chmod 600 /etc/basphere/vsphere.env
 sudo chown root:root /etc/basphere/vsphere.env
 ```
 
-### 3. Go 설치 (API 서버 빌드용)
+### 3. 빌드 도구 설치
 
 ```bash
-# Go 1.21+ 설치
-wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+# make 설치
+sudo apt install -y make
 
-# PATH 설정 (~/.bashrc 또는 ~/.profile에 추가)
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
+# Go 설치 (방법 1: apt - 간편)
+sudo apt install -y golang-go
+go version  # 1.22+ 확인
 
-# 설치 확인
-go version
+# Go 설치 (방법 2: 공식 바이너리 - 최신 버전 필요 시)
+# wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+# sudo rm -rf /usr/local/go
+# sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+# echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+# source ~/.bashrc
 ```
 
 ### 4. 설치 실행
@@ -316,9 +317,9 @@ go version
 cd /opt/basphere/basphere-cli
 sudo ./install.sh
 
-# API 서버 빌드
+# API 서버 빌드 (/opt 디렉토리이므로 sudo 필요)
 cd /opt/basphere/basphere-api
-make tidy && make build-linux
+sudo make tidy && sudo make build-linux
 ```
 
 ### 5. VM 템플릿 준비

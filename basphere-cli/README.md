@@ -150,7 +150,7 @@ sudo apt update && sudo apt install terraform
 
 ```bash
 # 저장소 클론
-git clone <repository-url>
+git clone https://github.com/garlicKim21/project-basphere.git
 cd basphere-cli
 
 # 설치 (root 권한 필요)
