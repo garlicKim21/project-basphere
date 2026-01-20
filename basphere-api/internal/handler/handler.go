@@ -291,7 +291,7 @@ func (h *Handler) validateEmailDomain(email string) error {
 		}
 	}
 
-	return fmt.Errorf("이메일 도메인 '%s'는 허용되지 않습니다. 허용된 도메인: %s", domain, strings.Join(allowedDomains, ", "))
+	return fmt.Errorf("이메일 도메인 '%s'는 허용되지 않습니다", domain)
 }
 
 // API handlers
