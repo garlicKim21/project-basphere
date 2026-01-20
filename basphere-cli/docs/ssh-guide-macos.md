@@ -154,18 +154,24 @@ vim ~/.ssh/config    # Vim
 ```
 # Basphere Bastion 서버
 Host bastion
-    HostName bastion.company.local
-    User kimht
+    HostName <bastion-address>
+    User <user-id>
+    Port <bastion-port>
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
     IdentityFile ~/.ssh/id_basphere
 
 # Basphere VM 접속 (Bastion 경유)
 Host 10.254.0.*
     ProxyJump bastion
-    User ubuntu
+    User <user-id>
     IdentityFile ~/.ssh/id_basphere
 ```
 
-> **참고**: `IdentityFile`은 기본 키(`~/.ssh/id_ed25519`)를 사용하는 경우 생략 가능합니다.
+> **참고**:
+> - `<bastion-address>`, `<bastion-port>`, `<user-id>`는 등록 완료 페이지에서 확인하세요.
+> - `IdentityFile`은 기본 키(`~/.ssh/id_ed25519`)를 사용하는 경우 생략 가능합니다.
 
 ### 4.3 config 파일 권한 설정
 
@@ -183,18 +189,6 @@ ssh bastion
 
 # VM 직접 접속 (Bastion 경유 자동)
 ssh 10.254.0.32
-```
-
-### 4.5 Rocky Linux VM 접속 설정
-
-Rocky Linux VM의 기본 사용자는 `rocky`입니다. 별도 설정 추가:
-
-```
-# Rocky Linux VM
-Host rocky-*
-    ProxyJump bastion
-    User rocky
-    IdentityFile ~/.ssh/id_basphere
 ```
 
 ---

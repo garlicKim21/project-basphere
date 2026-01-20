@@ -38,12 +38,12 @@ http://<bastion-server>:8080/register
 승인 후 SSH로 Bastion 서버에 접속합니다.
 
 ```bash
-ssh <your-username>@<bastion-server>
+ssh <user-id>@<bastion-server>
 ```
 
 예시:
 ```bash
-ssh <user-id>@bastion.company.local
+ssh <user-id>@bastion.example.com
 ```
 
 > **접속 오류 시**: [SSH 키 가이드](ssh-guide-macos.md)의 트러블슈팅 섹션을 참조하세요.
