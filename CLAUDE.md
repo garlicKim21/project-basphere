@@ -64,12 +64,14 @@ project-basphere/
 - **VM 초기화**: cloud-init
 - **향후 IDP**: Go 기반, PostgreSQL
 
-## 테스트 환경
+## 배포 환경 (예시)
+
+> **참고**: 실제 환경 정보는 `CLAUDE.local.md`에 있습니다 (git 제외).
 
 ### Bastion 서버
 | 항목 | 값 |
 |------|-----|
-| Bastion IP | 172.20.0.10 |
+| Bastion IP | `<bastion-ip>` |
 | 관리자 계정 | basphere |
 | Git 저장소 | /opt/basphere/ |
 | CLI 소스 | /opt/basphere/basphere-cli/ |
@@ -80,22 +82,22 @@ project-basphere/
 ### vSphere 환경
 | 항목 | 값 |
 |------|-----|
-| vCenter | vcsa.basphere.local |
-| Datacenter | Basphere |
-| Cluster | Basphere-Home |
-| Datastore | 01-VM-Block |
-| VM Network | 99-basphere-cli |
-| VM Folder | basphere-cli |
+| vCenter | `vcenter.example.com` |
+| Datacenter | `Your-Datacenter` |
+| Cluster | `Your-Cluster` |
+| Datastore | `Your-Datastore` |
+| VM Network | `VM-Network` |
+| VM Folder | `basphere-vms` |
 | Ubuntu 템플릿 | ubuntu-noble-24.04-cloudimg |
 | Rocky 템플릿 | rocky-10-template |
 
-### 네트워크 설정
+### 네트워크 설정 (예시)
 | 항목 | 값 |
 |------|-----|
-| CIDR | 10.254.0.0/21 |
-| Gateway | 10.254.0.1 |
+| CIDR | 10.0.0.0/21 |
+| Gateway | 10.0.0.1 |
 | Netmask | 255.255.248.0 (/21) |
-| MTU | 1450 (오버레이 네트워크) |
+| MTU | 1500 (일반) / 1450 (오버레이) |
 | DNS | 8.8.8.8, 1.1.1.1 |
 | 사용자당 IP 블록 | /27 (32개) |
 
@@ -365,14 +367,14 @@ sudo shutdown -h now
 
 ### 6. 환경별 체크리스트
 
-| 항목 | 홈랩 | 회사 |
-|------|------|------|
-| Bastion IP | 172.20.0.10 | 환경에 맞게 |
-| vCenter | vcsa.basphere.local | 회사 vCenter |
-| Datacenter | Basphere | 회사 DC |
-| 네트워크 대역 | 10.254.0.0/21 | 할당받은 대역 |
-| MTU | 1450 (오버레이) | 1500 (일반) |
-| DNS | 8.8.8.8 | 회사 DNS |
+| 항목 | 설정 예시 | 참고 |
+|------|----------|------|
+| Bastion IP | `<your-bastion-ip>` | 환경에 맞게 설정 |
+| vCenter | `vcenter.example.com` | vCenter 주소 |
+| Datacenter | `Your-Datacenter` | vSphere 데이터센터 이름 |
+| 네트워크 대역 | `10.0.0.0/21` | 할당받은 대역 |
+| MTU | 1500 (일반) / 1450 (오버레이) | 네트워크 환경에 따라 |
+| DNS | `8.8.8.8` 또는 사내 DNS | 환경에 맞게 |
 
 ### 7. API 서버 설정
 
@@ -404,7 +406,7 @@ validation:
 
 bastion:
   # 등록 완료 페이지에 표시할 Bastion 서버 주소
-  address: "bastion.example.com"                   # 또는 IP 주소 (예: "172.20.0.10")
+  address: "bastion.example.com"                   # 또는 IP 주소
   # SSH 포트 (기본: 22, 외부 노출 시 비표준 포트 사용 권장)
   port: 22                                         # 외부 노출 시 예: 50022
 ```
@@ -504,7 +506,7 @@ Bastion 서버를 외부에서 접근 가능하게 설정할 때 참고하세요
 #### 포트 포워딩 (방화벽/라우터)
 
 ```
-외부 포트 50022 → 내부 172.20.0.10:22
+외부 포트 50022 → 내부 <bastion-ip>:22
 ```
 
 > **주의**: 비표준 포트(50022 등)를 사용하여 자동화된 공격을 줄일 수 있습니다.
@@ -520,9 +522,9 @@ Bastion 서버를 외부에서 접근 가능하게 설정할 때 참고하세요
 #### api.yaml bastion 설정 예시
 
 ```yaml
-# 내부망 접속
+# 내부망 접속 (IP 사용)
 bastion:
-  address: "172.20.0.10"
+  address: "<bastion-ip>"
   port: 22
 
 # 외부 도메인 접속

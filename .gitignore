@@ -3,3 +3,6 @@ node_modules/
 
 # 개발 도구 (Claude Code MCP 서버 등)
 tools/
+
+# 로컬 환경 정보 (민감 정보 포함)
+CLAUDE.local.md
