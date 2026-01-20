@@ -86,6 +86,35 @@
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 12px;
         }
+        .ssh-config {
+            background: #f0f4f8;
+            border: 1px solid #d1dce5;
+            border-radius: 4px;
+            padding: 16px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        .ssh-config h3 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+        .ssh-config pre {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            white-space: pre;
+            line-height: 1.5;
+        }
+        .ssh-config p {
+            color: #666;
+            font-size: 12px;
+            margin-top: 8px;
+        }
         .back-link {
             margin-top: 24px;
         }
@@ -124,6 +153,23 @@
                     {{if ne .BastionPort 22}}<code>ssh -p {{.BastionPort}} {{.Username}}@{{.BastionAddress}}</code>{{else}}<code>ssh {{.Username}}@{{.BastionAddress}}</code>{{end}}
                 </li>
             </ol>
+        </div>
+
+        <div class="ssh-config">
+            <h3>SSH 설정 (권장)</h3>
+            <p>~/.ssh/config 파일에 추가하면 편리하게 접속할 수 있습니다:</p>
+            <pre>Host bastion
+    HostName {{.BastionAddress}}
+    User {{.Username}}{{if ne .BastionPort 22}}
+    Port {{.BastionPort}}{{end}}
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
+
+Host 10.254.0.*
+    ProxyJump bastion
+    User {{.Username}}</pre>
+            <p>설정 후 VM 접속: <code>ssh 10.254.0.x</code></p>
         </div>
 
         <div class="back-link">

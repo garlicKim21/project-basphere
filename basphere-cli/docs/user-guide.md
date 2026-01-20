@@ -294,32 +294,36 @@ ssh <user-id>@10.254.0.32
 
 ### Bastion을 통한 접속 (ProxyJump)
 
-로컬에서 직접 VM에 접속하려면:
-
-```bash
-ssh -J <user-id>@<bastion> <user-id>@<vm-ip>
-```
-
-예시:
-```bash
-ssh -J <user-id>@bastion.company.local <user-id>@10.254.0.32
-```
-
-또는 `~/.ssh/config`에 설정:
+로컬에서 직접 VM에 접속하려면 `~/.ssh/config`에 다음과 같이 설정합니다:
 
 ```
 Host bastion
-    HostName bastion.company.local
+    HostName <bastion-address>
     User <user-id>
+    Port <bastion-port>
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
 
 Host 10.254.0.*
     ProxyJump bastion
     User <user-id>
 ```
 
-이후:
+> **설정값 안내**: `<bastion-address>`, `<bastion-port>`는 관리자에게 문의하거나 등록 완료 페이지에서 확인하세요.
+
+설정 후 VM에 바로 접속:
 ```bash
 ssh 10.254.0.32
+```
+
+또는 명령어로 직접 접속:
+```bash
+# 포트가 22인 경우
+ssh -J <user-id>@<bastion-address> <user-id>@<vm-ip>
+
+# 포트가 22가 아닌 경우 (예: 50022)
+ssh -J <user-id>@<bastion-address>:<port> <user-id>@<vm-ip>
 ```
 
 ---
