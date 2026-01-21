@@ -326,6 +326,27 @@ ssh -J <user-id>@<bastion-address> <user-id>@<vm-ip>
 ssh -J <user-id>@<bastion-address>:<port> <user-id>@<vm-ip>
 ```
 
+### VM 포트 포워딩 (웹 서비스 접속)
+
+VM에서 웹 서버(nginx, 개발 서버 등)를 실행하고 로컬 브라우저에서 접속하려면 SSH 포트 포워딩을 사용합니다.
+
+```bash
+# VM의 80 포트를 로컬 8080으로 포워딩
+ssh -N -L 8080:localhost:80 <vm-ip>
+```
+
+- `-N`: 원격 명령 실행 안 함 (포워딩만)
+- `-L 8080:localhost:80`: 로컬 8080 → VM의 80 포트
+
+> **참고**: SSH Config의 ProxyJump가 설정되어 있어야 `<vm-ip>`로 직접 접속 가능합니다.
+
+포워딩 실행 후 브라우저에서:
+```
+http://localhost:8080
+```
+
+종료는 `Ctrl + C`를 눌러 포워딩을 종료합니다.
+
 ---
 
 ## VM 스펙

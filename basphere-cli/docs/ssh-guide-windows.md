@@ -11,8 +11,9 @@ Windows에서 SSH 키를 생성하고 관리하는 방법입니다.
 1. [처음 SSH 키를 만드는 경우](#1-처음-ssh-키를-만드는-경우)
 2. [이미 SSH 키가 있는 경우](#2-이미-ssh-키가-있는-경우)
 3. [새 키를 별도로 만들어 사용하는 경우](#3-새-키를-별도로-만들어-사용하는-경우)
-4. [SSH Config 설정으로 편리하게 접속하기](#4-ssh-config-설정으로-편리하게-접속하기)
-5. [트러블슈팅](#5-트러블슈팅)
+4. [SSH Config 설정으로 편리하게 접속하기 (권장)](#4-ssh-config-설정으로-편리하게-접속하기-권장)
+5. [VM 포트 포워딩 (웹 서비스 접속)](#5-vm-포트-포워딩-웹-서비스-접속)
+6. [트러블슈팅](#6-트러블슈팅)
 
 ---
 
@@ -160,7 +161,7 @@ ssh -i ~/.ssh/id_basphere kimht@bastion.company.local
 
 ---
 
-## 4. SSH Config 설정으로 편리하게 접속하기
+## 4. SSH Config 설정으로 편리하게 접속하기 (권장)
 
 SSH config 파일을 설정하면 간단한 명령으로 접속할 수 있습니다.
 
@@ -178,6 +179,11 @@ code $env:USERPROFILE\.ssh\config
 ### 4.2 설정 내용 추가
 
 ```
+# Host Key Checking 비활성화 (VS Code 등 IDE에서 편리하게 접속)
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
 # Basphere Bastion 서버
 Host bastion
     HostName <bastion-address>
@@ -186,18 +192,19 @@ Host bastion
     ServerAliveInterval 30
     ServerAliveCountMax 3
     TCPKeepAlive yes
-    IdentityFile ~/.ssh/id_basphere
+    IdentityFile C:/Users/<windows-user>/.ssh/id_ed25519
 
 # Basphere VM 접속 (Bastion 경유)
 Host 10.254.0.*
     ProxyJump bastion
     User <user-id>
-    IdentityFile ~/.ssh/id_basphere
+    IdentityFile C:/Users/<windows-user>/.ssh/id_ed25519
 ```
 
 > **참고**:
 > - `<bastion-address>`, `<bastion-port>`, `<user-id>`는 등록 완료 페이지에서 확인하세요.
-> - `IdentityFile`은 기본 키(`~/.ssh/id_ed25519`)를 사용하는 경우 생략 가능합니다.
+> - `<windows-user>`는 Windows 로컬 계정 이름입니다 (예: `C:/Users/john/.ssh/...`).
+> - `StrictHostKeyChecking no`는 처음 접속하는 호스트에서 fingerprint 확인을 건너뜁니다 (VS Code Remote SSH 등에서 편리).
 
 ### 4.3 간편 접속
 
@@ -213,7 +220,36 @@ ssh 10.254.0.32
 
 ---
 
-## 5. 트러블슈팅
+## 5. VM 포트 포워딩 (웹 서비스 접속)
+
+VM에서 웹 서버(nginx, 개발 서버 등)를 실행하고 로컬 브라우저에서 접속하려면 SSH 포트 포워딩을 사용합니다.
+
+### 5.1 포트 포워딩 명령어
+
+```powershell
+# VM의 80 포트를 로컬 8080으로 포워딩
+ssh -N -L 8080:localhost:80 <vm-ip>
+```
+
+- `-N`: 원격 명령 실행 안 함 (포워딩만)
+- `-L 8080:localhost:80`: 로컬 8080 → VM의 80 포트
+
+> **참고**: SSH Config가 설정되어 있어야 `<vm-ip>`로 직접 접속 가능합니다.
+
+### 5.2 브라우저에서 접속
+
+포워딩 실행 후 브라우저에서:
+```
+http://localhost:8080
+```
+
+### 5.3 종료
+
+`Ctrl + C`를 눌러 포워딩을 종료합니다.
+
+---
+
+## 6. 트러블슈팅
 
 ### OpenSSH 설치 (Windows 10 이전 버전)
 
