@@ -642,8 +642,21 @@ user_purge() {
 
     # 6. 시스템 사용자 삭제
     if id "$username" &> /dev/null; then
-        userdel -r "$username" 2>/dev/null || userdel "$username"
-        log_success "시스템 사용자 삭제 완료"
+        # 사용자 프로세스 종료 (SSH 세션 등)
+        if pgrep -u "$username" > /dev/null 2>&1; then
+            log_warn "사용자 '$username'의 활성 세션 종료 중..."
+            pkill -u "$username" 2>/dev/null || true
+            sleep 1
+        fi
+
+        # 사용자 삭제
+        if userdel -r "$username" 2>&1; then
+            log_success "시스템 사용자 삭제 완료"
+        else
+            log_error "시스템 사용자 삭제 실패"
+            log_error "수동으로 'sudo userdel -r $username' 실행 필요"
+            exit 1
+        fi
     fi
 
     # 감사 로그
