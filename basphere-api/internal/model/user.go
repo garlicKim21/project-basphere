@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // RequestStatus represents the status of a registration request
 type RequestStatus string
@@ -51,6 +54,9 @@ func (r *RegisterInput) Validate() []string {
 		errors = append(errors, "invalid email format")
 	}
 
+	// Sanitize SSH key (remove Windows line endings)
+	r.PublicKey = sanitizeSSHKey(r.PublicKey)
+
 	if r.PublicKey == "" {
 		errors = append(errors, "public_key is required")
 	} else if !isValidSSHPublicKey(r.PublicKey) {
@@ -100,6 +106,12 @@ func isValidEmail(email string) bool {
 	}
 
 	return hasAt && hasDot && atIndex > 0
+}
+
+// sanitizeSSHKey removes Windows line endings (\r) from SSH public key
+// This prevents issues when keys are copied from Windows systems
+func sanitizeSSHKey(key string) string {
+	return strings.ReplaceAll(strings.TrimSpace(key), "\r", "")
 }
 
 // isValidSSHPublicKey checks if the public key is valid
@@ -169,6 +181,9 @@ func (k *KeyChangeInput) Validate() []string {
 	} else if !isValidEmail(k.Email) {
 		errors = append(errors, "올바른 이메일 형식이 아닙니다")
 	}
+
+	// Sanitize SSH key (remove Windows line endings)
+	k.NewPublicKey = sanitizeSSHKey(k.NewPublicKey)
 
 	if k.NewPublicKey == "" {
 		errors = append(errors, "새 SSH 공개키를 입력해주세요")

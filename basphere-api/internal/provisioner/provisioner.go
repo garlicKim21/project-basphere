@@ -65,9 +65,12 @@ func NewBashProvisioner(adminScript string) (*BashProvisioner, error) {
 
 // CreateUser creates a system user with the given SSH public key
 func (p *BashProvisioner) CreateUser(req *model.RegistrationRequest) error {
+	// Sanitize SSH key (remove Windows line endings)
+	publicKey := strings.ReplaceAll(strings.TrimSpace(req.PublicKey), "\r", "")
+
 	// Write public key to temp file
 	pubkeyFile := filepath.Join(p.tempDir, req.Username+".pub")
-	if err := os.WriteFile(pubkeyFile, []byte(req.PublicKey), 0600); err != nil {
+	if err := os.WriteFile(pubkeyFile, []byte(publicKey), 0600); err != nil {
 		return fmt.Errorf("failed to write public key: %w", err)
 	}
 	defer os.Remove(pubkeyFile)
@@ -100,6 +103,9 @@ func (p *BashProvisioner) UserExists(username string) (bool, error) {
 
 // UpdateUserKey updates the SSH public key for a user
 func (p *BashProvisioner) UpdateUserKey(username, newPublicKey string) error {
+	// Sanitize SSH key (remove Windows line endings)
+	newPublicKey = strings.ReplaceAll(strings.TrimSpace(newPublicKey), "\r", "")
+
 	// Get user home directory
 	cmd := exec.Command("getent", "passwd", username)
 	var stdout bytes.Buffer
