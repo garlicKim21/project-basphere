@@ -1,0 +1,226 @@
+#!/bin/bash
+#
+# 클러스터 삭제 스크립트 (사용자용)
+# Stage 2: Cluster API 기반 프로비저닝
+#
+# 사용법: delete-cluster <cluster-name>
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 클러스터 공통 라이브러리 로드
+source /usr/local/lib/basphere/cluster-common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/cluster-common.sh"
+}
+
+# 내부 스크립트 경로
+INTERNAL_SCRIPTS="/usr/local/lib/basphere/internal"
+if [[ ! -d "$INTERNAL_SCRIPTS" ]]; then
+    INTERNAL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../internal"
+fi
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+클러스터 삭제
+
+사용법: delete-cluster <cluster-name> [옵션]
+
+옵션:
+  -f, --force   확인 없이 삭제
+  -h, --help    도움말
+
+예시:
+  delete-cluster my-cluster
+  delete-cluster my-cluster -f
+EOF
+    exit 0
+}
+
+# 클러스터 삭제 실행 (API 모드)
+delete_cluster_api_mode() {
+    local cluster_name="$1"
+    local user="$2"
+
+    # 클러스터 존재 확인
+    if ! cluster_exists "$user" "$cluster_name"; then
+        echo "{\"error\": \"Cluster not found: $cluster_name\"}" >&2
+        return 1
+    fi
+
+    local cluster_dir namespace
+    cluster_dir=$(get_cluster_dir "$user" "$cluster_name")
+    namespace=$(get_user_namespace "$user")
+
+    # Management 클러스터에서 삭제
+    if check_management_cluster 2>/dev/null; then
+        log_info "Management 클러스터에서 리소스 삭제 중..."
+
+        # Cluster 리소스 삭제 (CAPI가 관련 리소스 자동 정리)
+        mgmt_kubectl delete cluster "$cluster_name" -n "$namespace" --timeout=600s 2>/dev/null || true
+    fi
+
+    # 할당된 IP 반환
+    local cp_ip worker_ips
+    cp_ip=$(get_cluster_metadata "$user" "$cluster_name" "control_plane_ip")
+    worker_ips=$(get_cluster_metadata "$user" "$cluster_name" "worker_ips")
+
+    if [[ -n "$cp_ip" ]]; then
+        "$INTERNAL_SCRIPTS/release-ip" "$cp_ip" "$user" 2>/dev/null || true
+    fi
+
+    if [[ -n "$worker_ips" ]]; then
+        for ip in $(echo "$worker_ips" | jq -r '.[]' 2>/dev/null); do
+            "$INTERNAL_SCRIPTS/release-ip" "$ip" "$user" 2>/dev/null || true
+        done
+    fi
+
+    # 로컬 데이터 삭제
+    rm -rf "$cluster_dir"
+
+    # 감사 로그
+    audit_log "DELETE_CLUSTER" "$cluster_name" "user=$user"
+
+    echo "{\"success\": true, \"message\": \"Cluster deleted: $cluster_name\"}"
+    return 0
+}
+
+# 일반 모드 - API를 통한 클러스터 삭제
+delete_cluster_via_api() {
+    local cluster_name="$1"
+    local force="$2"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        exit 1
+    fi
+
+    # 클러스터 정보 조회
+    local response
+    response=$(api_call "GET" "/api/v1/clusters/$cluster_name")
+
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" != "true" ]]; then
+        log_error "클러스터를 찾을 수 없습니다: $cluster_name"
+        exit 1
+    fi
+
+    # 클러스터 정보 표시
+    local cluster_type cp_ip status
+    cluster_type=$(echo "$response" | jq -r '.data.type // "unknown"')
+    cp_ip=$(echo "$response" | jq -r '.data.control_plane_ip // "unknown"')
+    status=$(echo "$response" | jq -r '.data.status // "unknown"')
+
+    echo ""
+    echo "삭제할 클러스터 정보:"
+    echo "  - 이름: $cluster_name"
+    echo "  - 타입: $cluster_type"
+    echo "  - 상태: $status"
+    echo "  - Control Plane IP: $cp_ip"
+    echo ""
+
+    # 확인
+    if [[ "$force" != "true" ]]; then
+        log_warn "클러스터를 삭제하면 모든 데이터가 영구적으로 삭제됩니다!"
+        if ! prompt_confirm "정말 삭제하시겠습니까?"; then
+            log_info "취소되었습니다"
+            exit 0
+        fi
+    fi
+
+    log_info "클러스터 삭제 중... (VM 정리에 시간이 걸릴 수 있습니다)"
+
+    # API 호출
+    response=$(api_call "DELETE" "/api/v1/clusters/$cluster_name")
+
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        log_success "클러스터 삭제 완료: $cluster_name"
+        return 0
+    else
+        local error_msg
+        error_msg=$(api_get_error "$response")
+        log_error "클러스터 삭제 실패: $error_msg"
+        return 1
+    fi
+}
+
+# 메인 함수
+main() {
+    local cluster_name=""
+    local force=false
+    local api_mode=false
+    local target_user=""
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--force)
+                force=true
+                shift
+                ;;
+            --api)
+                api_mode=true
+                shift
+                ;;
+            --user)
+                target_user="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                ;;
+            -*)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+            *)
+                if [[ -z "$cluster_name" ]]; then
+                    cluster_name="$1"
+                else
+                    log_error "인자가 너무 많습니다"
+                    usage
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$cluster_name" ]]; then
+        log_error "클러스터 이름을 지정하세요"
+        usage
+    fi
+
+    # API 모드
+    if [[ "$api_mode" == "true" ]]; then
+        local user="${target_user:-$CURRENT_USER}"
+        if delete_cluster_api_mode "$cluster_name" "$user"; then
+            exit 0
+        else
+            exit 1
+        fi
+    fi
+
+    # 일반 모드
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    delete_cluster_via_api "$cluster_name" "$force"
+}
+
+main "$@"

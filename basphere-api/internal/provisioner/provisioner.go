@@ -29,16 +29,27 @@ type Provisioner interface {
 
 	// Quota
 	GetQuota(username string) (*model.Quota, error)
+
+	// Cluster management (Stage 2)
+	CreateCluster(username string, input *model.CreateClusterInput) (*model.Cluster, error)
+	DeleteCluster(username, clusterName string) error
+	ListClusters(username string) ([]model.Cluster, error)
+	GetCluster(username, clusterName string) (*model.Cluster, error)
+	ClusterExists(username, clusterName string) (bool, error)
+	GetKubeconfig(username, clusterName string) ([]byte, error)
+	GetClusterQuota(username string) (*model.ClusterQuota, error)
 }
 
 // BashProvisioner implements Provisioner using bash scripts
 type BashProvisioner struct {
-	adminScript   string
-	createVMScript string
-	deleteVMScript string
-	listVMsScript  string
-	tempDir       string
-	dataDir       string
+	adminScript         string
+	createVMScript      string
+	deleteVMScript      string
+	listVMsScript       string
+	createClusterScript string
+	deleteClusterScript string
+	tempDir             string
+	dataDir             string
 }
 
 // NewBashProvisioner creates a new bash-based provisioner
@@ -54,12 +65,14 @@ func NewBashProvisioner(adminScript string) (*BashProvisioner, error) {
 	}
 
 	return &BashProvisioner{
-		adminScript:    adminScript,
-		createVMScript: "/usr/local/bin/create-vm",
-		deleteVMScript: "/usr/local/bin/delete-vm",
-		listVMsScript:  "/usr/local/bin/list-vms",
-		tempDir:        tempDir,
-		dataDir:        "/var/lib/basphere",
+		adminScript:         adminScript,
+		createVMScript:      "/usr/local/bin/create-vm",
+		deleteVMScript:      "/usr/local/bin/delete-vm",
+		listVMsScript:       "/usr/local/bin/list-vms",
+		createClusterScript: "/usr/local/bin/create-cluster",
+		deleteClusterScript: "/usr/local/bin/delete-cluster",
+		tempDir:             tempDir,
+		dataDir:             "/var/lib/basphere",
 	}, nil
 }
 
@@ -309,17 +322,169 @@ func (p *BashProvisioner) GetQuota(username string) (*model.Quota, error) {
 	}, nil
 }
 
+// CreateCluster creates a new Kubernetes cluster for the user
+func (p *BashProvisioner) CreateCluster(username string, input *model.CreateClusterInput) (*model.Cluster, error) {
+	// Run create-cluster script with --api flag
+	cmd := exec.Command(p.createClusterScript,
+		"--api",
+		"--name", input.Name,
+		"--type", input.Type,
+		"--worker-spec", input.WorkerSpec,
+		"--user", username,
+	)
+
+	cmd.Env = append(os.Environ(), "BASPHERE_API_MODE=1")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to create cluster: %s\nstderr: %s", err, stderr.String())
+	}
+
+	// Parse JSON output
+	var cluster model.Cluster
+	if err := json.Unmarshal(stdout.Bytes(), &cluster); err != nil {
+		return nil, fmt.Errorf("failed to parse cluster output: %w\nstdout: %s", err, stdout.String())
+	}
+
+	return &cluster, nil
+}
+
+// DeleteCluster deletes a Kubernetes cluster
+func (p *BashProvisioner) DeleteCluster(username, clusterName string) error {
+	cmd := exec.Command(p.deleteClusterScript,
+		"--api",
+		"--force",
+		"--user", username,
+		clusterName,
+	)
+
+	cmd.Env = append(os.Environ(), "BASPHERE_API_MODE=1")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to delete cluster: %s\nstderr: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// ListClusters lists all clusters for a user
+func (p *BashProvisioner) ListClusters(username string) ([]model.Cluster, error) {
+	clusterDir := filepath.Join(p.dataDir, "clusters", username)
+
+	entries, err := os.ReadDir(clusterDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.Cluster{}, nil
+		}
+		return nil, fmt.Errorf("failed to read cluster directory: %w", err)
+	}
+
+	var clusters []model.Cluster
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		metadataPath := filepath.Join(clusterDir, entry.Name(), "metadata.json")
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue // Skip if metadata doesn't exist
+		}
+
+		var cluster model.Cluster
+		if err := json.Unmarshal(data, &cluster); err != nil {
+			continue // Skip if invalid JSON
+		}
+
+		clusters = append(clusters, cluster)
+	}
+
+	return clusters, nil
+}
+
+// GetCluster gets a specific cluster
+func (p *BashProvisioner) GetCluster(username, clusterName string) (*model.Cluster, error) {
+	metadataPath := filepath.Join(p.dataDir, "clusters", username, clusterName, "metadata.json")
+
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("cluster not found: %s", clusterName)
+		}
+		return nil, fmt.Errorf("failed to read cluster metadata: %w", err)
+	}
+
+	var cluster model.Cluster
+	if err := json.Unmarshal(data, &cluster); err != nil {
+		return nil, fmt.Errorf("failed to parse cluster metadata: %w", err)
+	}
+
+	return &cluster, nil
+}
+
+// ClusterExists checks if a cluster exists
+func (p *BashProvisioner) ClusterExists(username, clusterName string) (bool, error) {
+	metadataPath := filepath.Join(p.dataDir, "clusters", username, clusterName, "metadata.json")
+	_, err := os.Stat(metadataPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// GetKubeconfig gets the kubeconfig for a cluster
+func (p *BashProvisioner) GetKubeconfig(username, clusterName string) ([]byte, error) {
+	kubeconfigPath := filepath.Join(p.dataDir, "clusters", username, clusterName, "kubeconfig")
+
+	data, err := os.ReadFile(kubeconfigPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("kubeconfig not found: cluster may still be provisioning")
+		}
+		return nil, fmt.Errorf("failed to read kubeconfig: %w", err)
+	}
+
+	return data, nil
+}
+
+// GetClusterQuota gets the cluster quota for a user
+func (p *BashProvisioner) GetClusterQuota(username string) (*model.ClusterQuota, error) {
+	clusters, err := p.ListClusters(username)
+	if err != nil {
+		return nil, err
+	}
+
+	// Default quotas (should come from config)
+	return &model.ClusterQuota{
+		MaxClusters:        3,
+		UsedClusters:       len(clusters),
+		MaxNodesPerCluster: 10,
+	}, nil
+}
+
 // MockProvisioner is a provisioner for testing
 type MockProvisioner struct {
-	Users map[string]bool
-	VMs   map[string][]model.VM
+	Users    map[string]bool
+	VMs      map[string][]model.VM
+	Clusters map[string][]model.Cluster
 }
 
 // NewMockProvisioner creates a mock provisioner for testing
 func NewMockProvisioner() *MockProvisioner {
 	return &MockProvisioner{
-		Users: make(map[string]bool),
-		VMs:   make(map[string][]model.VM),
+		Users:    make(map[string]bool),
+		VMs:      make(map[string][]model.VM),
+		Clusters: make(map[string][]model.Cluster),
 	}
 }
 
@@ -423,6 +588,105 @@ func (p *MockProvisioner) GetQuota(username string) (*model.Quota, error) {
 		UsedVMs: len(vms),
 		MaxIPs:  32,
 		UsedIPs: len(vms),
+	}, nil
+}
+
+// CreateCluster mock implementation
+func (p *MockProvisioner) CreateCluster(username string, input *model.CreateClusterInput) (*model.Cluster, error) {
+	// Check if cluster already exists
+	for _, c := range p.Clusters[username] {
+		if c.Name == input.Name {
+			return nil, fmt.Errorf("cluster already exists: %s", input.Name)
+		}
+	}
+
+	cluster := model.Cluster{
+		Name:              input.Name,
+		Owner:             username,
+		Type:              input.Type,
+		K8sVersion:        "v1.28.0",
+		ControlPlaneCount: 1,
+		WorkerCount:       2,
+		WorkerSpec:        input.WorkerSpec,
+		ControlPlaneIP:    fmt.Sprintf("10.254.0.%d", len(p.Clusters[username])+100),
+		Status:            model.ClusterStatusProvisioning,
+	}
+
+	p.Clusters[username] = append(p.Clusters[username], cluster)
+	return &cluster, nil
+}
+
+// DeleteCluster mock implementation
+func (p *MockProvisioner) DeleteCluster(username, clusterName string) error {
+	clusters := p.Clusters[username]
+	for i, c := range clusters {
+		if c.Name == clusterName {
+			p.Clusters[username] = append(clusters[:i], clusters[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("cluster not found: %s", clusterName)
+}
+
+// ListClusters mock implementation
+func (p *MockProvisioner) ListClusters(username string) ([]model.Cluster, error) {
+	return p.Clusters[username], nil
+}
+
+// GetCluster mock implementation
+func (p *MockProvisioner) GetCluster(username, clusterName string) (*model.Cluster, error) {
+	for _, c := range p.Clusters[username] {
+		if c.Name == clusterName {
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("cluster not found: %s", clusterName)
+}
+
+// ClusterExists mock implementation
+func (p *MockProvisioner) ClusterExists(username, clusterName string) (bool, error) {
+	for _, c := range p.Clusters[username] {
+		if c.Name == clusterName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// GetKubeconfig mock implementation
+func (p *MockProvisioner) GetKubeconfig(username, clusterName string) ([]byte, error) {
+	for _, c := range p.Clusters[username] {
+		if c.Name == clusterName {
+			// Return a mock kubeconfig
+			return []byte(fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://%s:6443
+  name: %s
+contexts:
+- context:
+    cluster: %s
+    user: admin
+  name: %s
+current-context: %s
+users:
+- name: admin
+  user:
+    token: mock-token
+`, c.ControlPlaneIP, c.Name, c.Name, c.Name, c.Name)), nil
+		}
+	}
+	return nil, fmt.Errorf("cluster not found: %s", clusterName)
+}
+
+// GetClusterQuota mock implementation
+func (p *MockProvisioner) GetClusterQuota(username string) (*model.ClusterQuota, error) {
+	clusters := p.Clusters[username]
+	return &model.ClusterQuota{
+		MaxClusters:        3,
+		UsedClusters:       len(clusters),
+		MaxNodesPerCluster: 10,
 	}, nil
 }
 

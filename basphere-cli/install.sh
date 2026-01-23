@@ -318,9 +318,26 @@ install_cli_scripts() {
         log_success "basphere-admin 설치 완료"
     fi
 
-    # 사용자 CLI
+    # Management Cluster 설정 스크립트 (Stage 2)
+    if [[ -f "$script_dir/scripts/internal/setup-management-cluster" ]]; then
+        cp "$script_dir/scripts/internal/setup-management-cluster" "$bin_dir/"
+        chmod +x "$bin_dir/setup-management-cluster"
+        log_success "setup-management-cluster 설치 완료"
+    fi
+
+    # 사용자 CLI (Stage 1: VM)
     local user_scripts=("create-vm" "delete-vm" "list-vms" "list-resources" "show-quota")
     for script in "${user_scripts[@]}"; do
+        if [[ -f "$script_dir/scripts/user/$script" ]]; then
+            cp "$script_dir/scripts/user/$script" "$bin_dir/"
+            chmod +x "$bin_dir/$script"
+            log_success "$script 설치 완료"
+        fi
+    done
+
+    # 사용자 CLI (Stage 2: Cluster)
+    local cluster_scripts=("create-cluster" "delete-cluster" "list-clusters" "get-kubeconfig" "watch-cluster")
+    for script in "${cluster_scripts[@]}"; do
         if [[ -f "$script_dir/scripts/user/$script" ]]; then
             cp "$script_dir/scripts/user/$script" "$bin_dir/"
             chmod +x "$bin_dir/$script"
@@ -394,12 +411,19 @@ setup_sudoers() {
     cat > "$sudoers_file" << 'EOF'
 # Basphere CLI sudoers 설정
 
-# basphere-users 그룹: 사용자 CLI 실행 가능
+# basphere-users 그룹: 사용자 CLI 실행 가능 (Stage 1: VM)
 %basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/create-vm
 %basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/delete-vm
 %basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/list-vms
 %basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/list-resources
 %basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/show-quota
+
+# basphere-users 그룹: 사용자 CLI 실행 가능 (Stage 2: Cluster)
+%basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/create-cluster
+%basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/delete-cluster
+%basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/list-clusters
+%basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/get-kubeconfig
+%basphere-users ALL=(basphere) NOPASSWD: /usr/local/bin/watch-cluster
 
 # basphere-admin 그룹: 관리자 CLI 실행 가능
 %basphere-admin ALL=(root) NOPASSWD: /usr/local/bin/basphere-admin
@@ -448,7 +472,12 @@ print_completion_message() {
     echo "6. 사용자가 VM 생성:"
     echo "   create-vm"
     echo ""
+    echo "7. (Stage 2) Kubernetes 클러스터 생성:"
+    echo "   create-cluster"
+    echo ""
     echo -e "${YELLOW}[주의]${NC} CLI 명령어가 작동하려면 API 서버가 실행 중이어야 합니다."
+    echo -e "${YELLOW}[주의]${NC} 클러스터 명령어는 Management 클러스터가 설정되어 있어야 합니다."
+    echo "   sudo setup-management-cluster --help"
     echo ""
 }
 

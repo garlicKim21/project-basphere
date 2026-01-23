@@ -1,0 +1,469 @@
+#!/bin/bash
+#
+# Kubernetes 클러스터 생성 스크립트 (사용자용)
+# Stage 2: Cluster API 기반 프로비저닝
+#
+# 사용법: create-cluster [옵션]
+#
+# 일반 모드: API 서버를 통해 클러스터 생성
+# API 모드 (--api): 직접 kubectl apply 실행 (API 서버에서 호출)
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 클러스터 공통 라이브러리 로드
+source /usr/local/lib/basphere/cluster-common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/cluster-common.sh"
+}
+
+# 내부 스크립트 경로
+INTERNAL_SCRIPTS="/usr/local/lib/basphere/internal"
+if [[ ! -d "$INTERNAL_SCRIPTS" ]]; then
+    INTERNAL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../internal"
+fi
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+Kubernetes 클러스터 생성 (Cluster API 기반)
+
+사용법: create-cluster [옵션]
+
+옵션:
+  -n, --name <name>     클러스터 이름 (대화형 입력 가능)
+  -t, --type <type>     클러스터 타입 (dev, standard)
+  -w, --worker-spec <spec>  Worker 노드 스펙 (small, medium, large)
+  -h, --help            도움말
+
+클러스터 타입:
+  dev       - 개발용 (1 Control Plane, 2 Workers)
+  standard  - HA 구성 (3 Control Plane, 3 Workers)
+
+예시:
+  create-cluster                              # 대화형 모드
+  create-cluster -n my-cluster -t dev         # 개발용 클러스터
+  create-cluster -n prod -t standard -w large # 프로덕션 클러스터
+EOF
+    exit 0
+}
+
+# 사용자 SSH 공개키 가져오기
+get_user_ssh_key() {
+    local user="$1"
+    local ssh_key_file="/home/$user/.ssh/authorized_keys"
+
+    if [[ -f "$ssh_key_file" ]]; then
+        head -1 "$ssh_key_file"
+    else
+        log_warn "SSH 공개키를 찾을 수 없습니다"
+        echo ""
+    fi
+}
+
+# 클러스터 manifest 생성 (API 모드)
+generate_cluster_manifests() {
+    local cluster_name="$1"
+    local cluster_type="$2"
+    local worker_spec="$3"
+    local user="$4"
+
+    local cluster_dir namespace
+    cluster_dir=$(get_cluster_dir "$user" "$cluster_name")
+    namespace=$(get_user_namespace "$user")
+    mkdir -p "$cluster_dir"
+
+    # 클러스터 타입에서 노드 수 가져오기
+    local cp_count worker_count cp_spec
+    cp_count=$(get_cluster_control_plane_count "$cluster_type")
+    worker_count=$(get_cluster_worker_count "$cluster_type")
+    cp_spec=$(get_spec ".cluster_types.${cluster_type}.control_plane_spec" "medium")
+
+    # 노드 스펙 가져오기
+    local cp_cpu cp_memory cp_disk worker_cpu worker_memory worker_disk
+    cp_cpu=$(get_cluster_node_cpu "$cp_spec")
+    cp_memory=$(get_cluster_node_memory "$cp_spec")
+    cp_disk=$(get_cluster_node_disk "$cp_spec")
+    worker_cpu=$(get_cluster_node_cpu "$worker_spec")
+    worker_memory=$(get_cluster_node_memory "$worker_spec")
+    worker_disk=$(get_cluster_node_disk "$worker_spec")
+
+    # vSphere 설정 가져오기
+    local vsphere_server vsphere_datacenter vsphere_datastore
+    local vsphere_network vsphere_folder vsphere_resource_pool k8s_template
+    vsphere_server=$(get_config '.vsphere.server')
+    vsphere_datacenter=$(get_config '.vsphere.datacenter')
+    vsphere_datastore=$(get_config '.vsphere.datastore')
+    vsphere_network=$(get_config '.vsphere.network')
+    vsphere_folder=$(get_config '.vsphere.folder')
+    vsphere_resource_pool=$(get_config '.vsphere.resource_pool' "/${vsphere_datacenter}/host/$(get_config '.vsphere.cluster')/Resources")
+    k8s_template=$(get_kubernetes_template)
+
+    # 네트워크 설정
+    local gateway network_prefix
+    gateway=$(get_config '.network.gateway')
+    network_prefix=$(get_config '.network.prefix_length' '21')
+
+    # IP 할당 - Control Plane
+    local control_plane_ip
+    local total_ips_needed=$((cp_count + worker_count))
+
+    # IP 할당
+    log_info "IP 할당 중..."
+    control_plane_ip=$("$INTERNAL_SCRIPTS/allocate-ip" "$user" "${cluster_name}-cp" "cluster-cp" 2>/dev/null) || {
+        log_error "Control Plane IP 할당 실패"
+        return 1
+    }
+
+    # Worker IP 할당
+    local worker_ips=()
+    local worker_ip_yaml=""
+    for i in $(seq 1 "$worker_count"); do
+        local worker_ip
+        worker_ip=$("$INTERNAL_SCRIPTS/allocate-ip" "$user" "${cluster_name}-worker-${i}" "cluster-worker" 2>/dev/null) || {
+            log_error "Worker IP 할당 실패"
+            # 이전에 할당된 IP 반환
+            "$INTERNAL_SCRIPTS/release-ip" "$control_plane_ip" "$user" 2>/dev/null || true
+            for ip in "${worker_ips[@]}"; do
+                "$INTERNAL_SCRIPTS/release-ip" "$ip" "$user" 2>/dev/null || true
+            done
+            return 1
+        }
+        worker_ips+=("$worker_ip")
+        worker_ip_yaml+="    - $worker_ip"$'\n'
+    done
+
+    log_success "Control Plane IP: $control_plane_ip"
+    log_success "Worker IPs: ${worker_ips[*]}"
+
+    # SSH 키
+    local ssh_authorized_key
+    ssh_authorized_key=$(get_user_ssh_key "$user")
+
+    # vSphere 인증 정보 로드
+    if [[ ! -f "$BASPHERE_VSPHERE_ENV" ]]; then
+        log_error "vSphere 환경변수 파일을 찾을 수 없습니다"
+        return 1
+    fi
+    set -a
+    source "$BASPHERE_VSPHERE_ENV"
+    set +a
+
+    # 템플릿 변수 설정 및 렌더링
+    export CLUSTER_NAME="$cluster_name"
+    export CLUSTER_TYPE="$cluster_type"
+    export NAMESPACE="$namespace"
+    export OWNER="$user"
+    export CONTROL_PLANE_IP="$control_plane_ip"
+    export CONTROL_PLANE_COUNT="$cp_count"
+    export CONTROL_PLANE_CPU="$cp_cpu"
+    export CONTROL_PLANE_MEMORY="$cp_memory"
+    export CONTROL_PLANE_DISK="$cp_disk"
+    export WORKER_COUNT="$worker_count"
+    export WORKER_CPU="$worker_cpu"
+    export WORKER_MEMORY="$worker_memory"
+    export WORKER_DISK="$worker_disk"
+    export KUBERNETES_VERSION="v1.28.0"
+    export VSPHERE_SERVER="$vsphere_server"
+    export VSPHERE_DATACENTER="$vsphere_datacenter"
+    export VSPHERE_DATASTORE="$vsphere_datastore"
+    export VSPHERE_NETWORK="$vsphere_network"
+    export VSPHERE_FOLDER="$vsphere_folder"
+    export VSPHERE_RESOURCE_POOL="$vsphere_resource_pool"
+    export KUBERNETES_TEMPLATE="$k8s_template"
+    export VSPHERE_USERNAME="${VSPHERE_USER}"
+    export VSPHERE_PASSWORD="${VSPHERE_PASSWORD}"
+    export VSPHERE_TLS_THUMBPRINT="${VSPHERE_TLS_THUMBPRINT:-}"
+    export SSH_AUTHORIZED_KEY="$ssh_authorized_key"
+    export NETWORK_GATEWAY="$gateway"
+    export NETWORK_PREFIX="$network_prefix"
+    export WORKER_IP_ADDRESSES="$worker_ip_yaml"
+
+    # 템플릿 렌더링
+    local template_file="$BASPHERE_CAPI_TEMPLATES/cluster.yaml.tmpl"
+    if [[ ! -f "$template_file" ]]; then
+        # 로컬 개발 경로 시도
+        template_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../templates/capi/cluster.yaml.tmpl"
+    fi
+
+    if [[ ! -f "$template_file" ]]; then
+        log_error "클러스터 템플릿을 찾을 수 없습니다"
+        return 1
+    fi
+
+    envsubst < "$template_file" > "$cluster_dir/cluster.yaml"
+
+    # 메타데이터 저장
+    local created_at
+    created_at=$(get_timestamp)
+    cat > "$cluster_dir/metadata.json" << EOF
+{
+    "name": "$cluster_name",
+    "owner": "$user",
+    "type": "$cluster_type",
+    "k8s_version": "v1.28.0",
+    "control_plane_count": $cp_count,
+    "worker_count": $worker_count,
+    "worker_spec": "$worker_spec",
+    "control_plane_ip": "$control_plane_ip",
+    "worker_ips": $(printf '%s\n' "${worker_ips[@]}" | jq -R . | jq -s .),
+    "status": "pending",
+    "created_at": "$created_at"
+}
+EOF
+
+    echo "$cluster_dir/cluster.yaml"
+}
+
+# 클러스터 생성 실행 (API 모드 - kubectl apply 직접 실행)
+create_cluster_api_mode() {
+    local cluster_name="$1"
+    local cluster_type="$2"
+    local worker_spec="$3"
+    local user="$4"
+
+    # 이미 존재하는지 확인
+    if cluster_exists "$user" "$cluster_name"; then
+        echo "{\"error\": \"Cluster already exists: $cluster_name\"}" >&2
+        return 1
+    fi
+
+    # Management 클러스터 연결 확인
+    if ! check_management_cluster; then
+        echo "{\"error\": \"Cannot connect to management cluster\"}" >&2
+        return 1
+    fi
+
+    # CAPI 설치 확인
+    if ! check_capi_installed; then
+        echo "{\"error\": \"Cluster API is not installed\"}" >&2
+        return 1
+    fi
+
+    # 사용자 네임스페이스 생성
+    ensure_user_namespace "$user"
+
+    # manifest 생성
+    local manifest_file
+    manifest_file=$(generate_cluster_manifests "$cluster_name" "$cluster_type" "$worker_spec" "$user")
+
+    if [[ ! -f "$manifest_file" ]]; then
+        echo "{\"error\": \"Failed to generate cluster manifest\"}" >&2
+        return 1
+    fi
+
+    # kubectl apply 실행
+    local cluster_dir
+    cluster_dir=$(get_cluster_dir "$user" "$cluster_name")
+
+    if ! mgmt_kubectl apply -f "$manifest_file" > "$cluster_dir/apply.log" 2>&1; then
+        # 실패 시 상태 업데이트
+        set_cluster_metadata "$user" "$cluster_name" "status" "failed"
+        echo "{\"error\": \"kubectl apply failed. Check $cluster_dir/apply.log\"}" >&2
+        return 1
+    fi
+
+    # 상태 업데이트
+    set_cluster_metadata "$user" "$cluster_name" "status" "provisioning"
+
+    # 감사 로그
+    audit_log "CREATE_CLUSTER" "$cluster_name" "user=$user,type=$cluster_type,worker_spec=$worker_spec"
+
+    # JSON 출력 (API 모드)
+    cat "$cluster_dir/metadata.json"
+    return 0
+}
+
+# 일반 모드 - API를 통한 클러스터 생성
+create_cluster_via_api() {
+    local cluster_name="$1"
+    local cluster_type="$2"
+    local worker_spec="$3"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        exit 1
+    fi
+
+    # JSON 데이터 생성
+    local json_data
+    json_data=$(jq -n \
+        --arg name "$cluster_name" \
+        --arg type "$cluster_type" \
+        --arg worker_spec "$worker_spec" \
+        '{name: $name, type: $type, worker_spec: $worker_spec}')
+
+    log_info "클러스터 생성 요청 중..."
+
+    # API 호출
+    local response
+    response=$(api_call "POST" "/api/v1/clusters" "$json_data")
+
+    # 응답 파싱
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        local cp_ip status
+        cp_ip=$(echo "$response" | jq -r '.data.control_plane_ip // "pending"')
+        status=$(echo "$response" | jq -r '.data.status // "provisioning"')
+
+        echo ""
+        echo "=========================================="
+        echo "클러스터 생성 요청 완료"
+        echo "=========================================="
+        echo "  이름: $cluster_name"
+        echo "  타입: $cluster_type"
+        echo "  상태: $status"
+        echo "  Control Plane IP: $cp_ip"
+        echo ""
+        echo "진행 상황 확인: watch-cluster $cluster_name"
+        echo "클러스터 목록: list-clusters"
+        echo ""
+
+        return 0
+    else
+        local error_msg
+        error_msg=$(api_get_error "$response")
+        log_error "클러스터 생성 실패: $error_msg"
+        return 1
+    fi
+}
+
+# 메인 함수
+main() {
+    local cluster_name=""
+    local cluster_type=""
+    local worker_spec=""
+    local api_mode=false
+    local target_user=""
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name)
+                cluster_name="$2"
+                shift 2
+                ;;
+            -t|--type)
+                cluster_type="$2"
+                shift 2
+                ;;
+            -w|--worker-spec)
+                worker_spec="$2"
+                shift 2
+                ;;
+            --api)
+                api_mode=true
+                shift
+                ;;
+            --user)
+                target_user="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # API 모드: kubectl apply 직접 실행 (API 서버에서 호출)
+    if [[ "$api_mode" == "true" ]]; then
+        local user="${target_user:-$CURRENT_USER}"
+
+        if [[ -z "$cluster_name" || -z "$cluster_type" || -z "$worker_spec" ]]; then
+            echo "{\"error\": \"Missing required parameters: name, type, worker_spec\"}" >&2
+            exit 1
+        fi
+
+        if create_cluster_api_mode "$cluster_name" "$cluster_type" "$worker_spec" "$user"; then
+            exit 0
+        else
+            exit 1
+        fi
+    fi
+
+    # 일반 모드: 사용자 대화형 입력 후 API 호출
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        log_info "관리자에게 계정 생성을 요청하세요"
+        exit 1
+    fi
+
+    echo ""
+    echo "=== Kubernetes 클러스터 생성 ==="
+    echo ""
+
+    # 1. 클러스터 이름 입력
+    if [[ -z "$cluster_name" ]]; then
+        while true; do
+            cluster_name=$(prompt_input "클러스터 이름")
+            if validate_resource_name "$cluster_name"; then
+                break
+            fi
+        done
+    fi
+
+    # 이름 중복 확인
+    if cluster_exists "$CURRENT_USER" "$cluster_name"; then
+        log_error "이미 존재하는 클러스터 이름입니다: $cluster_name"
+        exit 1
+    fi
+
+    # 할당량 확인
+    if ! check_cluster_quota "$CURRENT_USER"; then
+        exit 1
+    fi
+
+    # 2. 클러스터 타입 선택
+    if [[ -z "$cluster_type" ]]; then
+        echo ""
+        cluster_type=$(prompt_cluster_type)
+    fi
+
+    # 3. Worker 스펙 선택
+    if [[ -z "$worker_spec" ]]; then
+        echo ""
+        worker_spec=$(prompt_worker_spec)
+    fi
+
+    # 클러스터 정보 요약
+    local cp_count worker_count
+    cp_count=$(get_cluster_control_plane_count "$cluster_type")
+    worker_count=$(get_cluster_worker_count "$cluster_type")
+
+    echo ""
+    echo "생성할 클러스터 정보:"
+    echo "  - 이름: $cluster_name"
+    echo "  - 타입: $cluster_type ($(get_cluster_type_description "$cluster_type"))"
+    echo "  - Control Plane: ${cp_count}대"
+    echo "  - Worker 노드: ${worker_count}대 (스펙: $worker_spec)"
+    echo ""
+
+    if ! prompt_confirm "클러스터를 생성하시겠습니까?" "y"; then
+        log_info "취소되었습니다"
+        exit 0
+    fi
+
+    echo ""
+
+    # API를 통해 클러스터 생성
+    create_cluster_via_api "$cluster_name" "$cluster_type" "$worker_spec"
+}
+
+main "$@"

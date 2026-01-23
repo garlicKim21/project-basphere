@@ -1,0 +1,573 @@
+#!/bin/bash
+#
+# Basphere Management Cluster 설정 스크립트
+# Stage 2: Cluster API 기반 Kubernetes 클러스터 프로비저닝
+#
+# 이 스크립트는 kind를 사용하여 Management Cluster를 구축하고
+# Cluster API (CAPI) 및 CAPV를 설치합니다.
+#
+# 사용법: sudo setup-management-cluster
+#
+
+set -euo pipefail
+
+source /usr/local/lib/basphere/common.sh
+
+# ============================================
+# 상수 정의
+# ============================================
+
+readonly KIND_CLUSTER_NAME="basphere-mgmt"
+readonly KIND_CONFIG="/etc/basphere/kind-config.yaml"
+readonly MGMT_KUBECONFIG="/etc/basphere/management-kubeconfig"
+readonly CAPI_VERSION="v1.6.0"
+readonly CAPV_VERSION="v1.9.0"
+
+# ============================================
+# 의존성 체크 및 설치 함수
+# ============================================
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log_error "이 스크립트는 root 권한으로 실행해야 합니다"
+        log_info "sudo $0 를 사용하세요"
+        exit 1
+    fi
+}
+
+check_docker() {
+    if ! command -v docker &>/dev/null; then
+        log_warn "Docker가 설치되어 있지 않습니다"
+        return 1
+    fi
+
+    if ! docker info &>/dev/null; then
+        log_warn "Docker 데몬이 실행 중이지 않습니다"
+        return 1
+    fi
+
+    log_success "Docker 확인 완료"
+    return 0
+}
+
+install_docker() {
+    log_info "Docker 설치 중..."
+
+    apt-get update
+    apt-get install -y docker.io
+
+    systemctl enable docker
+    systemctl start docker
+
+    # basphere 사용자를 docker 그룹에 추가
+    if id "basphere" &>/dev/null; then
+        usermod -aG docker basphere
+    fi
+
+    log_success "Docker 설치 완료"
+}
+
+check_kind() {
+    if ! command -v kind &>/dev/null; then
+        log_warn "kind가 설치되어 있지 않습니다"
+        return 1
+    fi
+
+    log_success "kind 확인 완료: $(kind version)"
+    return 0
+}
+
+install_kind() {
+    log_info "kind 설치 중..."
+
+    local kind_version="v0.20.0"
+    local arch
+    arch=$(dpkg --print-architecture)
+
+    curl -Lo /usr/local/bin/kind \
+        "https://kind.sigs.k8s.io/dl/${kind_version}/kind-linux-${arch}"
+    chmod +x /usr/local/bin/kind
+
+    log_success "kind 설치 완료: $(kind version)"
+}
+
+check_kubectl() {
+    if ! command -v kubectl &>/dev/null; then
+        log_warn "kubectl이 설치되어 있지 않습니다"
+        return 1
+    fi
+
+    log_success "kubectl 확인 완료: $(kubectl version --client --short 2>/dev/null || kubectl version --client | head -1)"
+    return 0
+}
+
+install_kubectl() {
+    log_info "kubectl 설치 중..."
+
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    mv kubectl /usr/local/bin/
+
+    log_success "kubectl 설치 완료"
+}
+
+check_clusterctl() {
+    if ! command -v clusterctl &>/dev/null; then
+        log_warn "clusterctl이 설치되어 있지 않습니다"
+        return 1
+    fi
+
+    log_success "clusterctl 확인 완료: $(clusterctl version --short 2>/dev/null || clusterctl version | head -1)"
+    return 0
+}
+
+install_clusterctl() {
+    log_info "clusterctl 설치 중 (버전: ${CAPI_VERSION})..."
+
+    local arch
+    arch=$(dpkg --print-architecture)
+
+    curl -L "https://github.com/kubernetes-sigs/cluster-api/releases/download/${CAPI_VERSION}/clusterctl-linux-${arch}" \
+        -o /usr/local/bin/clusterctl
+    chmod +x /usr/local/bin/clusterctl
+
+    log_success "clusterctl 설치 완료"
+}
+
+# ============================================
+# kind 클러스터 설정 함수
+# ============================================
+
+create_kind_config() {
+    log_info "kind 설정 파일 생성 중..."
+
+    mkdir -p /etc/basphere
+
+    cat > "$KIND_CONFIG" << 'EOF'
+# Basphere Management Cluster - kind 설정
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: basphere-mgmt
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Kubernetes API
+      - containerPort: 6443
+        hostPort: 6443
+        protocol: TCP
+networking:
+  # Pod 네트워크 (클러스터 내부)
+  podSubnet: "10.244.0.0/16"
+  # Service 네트워크 (클러스터 내부)
+  serviceSubnet: "10.96.0.0/12"
+EOF
+
+    log_success "kind 설정 파일 생성 완료: $KIND_CONFIG"
+}
+
+check_kind_cluster() {
+    if kind get clusters 2>/dev/null | grep -q "^${KIND_CLUSTER_NAME}$"; then
+        log_info "기존 Management 클러스터가 있습니다: $KIND_CLUSTER_NAME"
+        return 0
+    fi
+    return 1
+}
+
+create_kind_cluster() {
+    log_info "Management 클러스터 생성 중..."
+
+    kind create cluster --config "$KIND_CONFIG"
+
+    # kubeconfig 저장
+    kind get kubeconfig --name "$KIND_CLUSTER_NAME" > "$MGMT_KUBECONFIG"
+    chmod 600 "$MGMT_KUBECONFIG"
+
+    log_success "Management 클러스터 생성 완료"
+    log_info "kubeconfig 저장됨: $MGMT_KUBECONFIG"
+}
+
+delete_kind_cluster() {
+    log_warn "기존 Management 클러스터 삭제 중..."
+    kind delete cluster --name "$KIND_CLUSTER_NAME" || true
+    rm -f "$MGMT_KUBECONFIG"
+}
+
+verify_kind_cluster() {
+    log_info "Management 클러스터 연결 확인 중..."
+
+    export KUBECONFIG="$MGMT_KUBECONFIG"
+
+    if ! kubectl cluster-info &>/dev/null; then
+        log_error "Management 클러스터에 연결할 수 없습니다"
+        return 1
+    fi
+
+    log_success "Management 클러스터 연결 확인 완료"
+
+    # 노드 상태 확인
+    kubectl get nodes
+}
+
+# ============================================
+# Cluster API 설정 함수
+# ============================================
+
+setup_vsphere_credentials() {
+    log_info "vSphere 인증 정보 설정 중..."
+
+    if [[ ! -f "$BASPHERE_VSPHERE_ENV" ]]; then
+        log_error "vSphere 환경변수 파일을 찾을 수 없습니다: $BASPHERE_VSPHERE_ENV"
+        log_info "다음 형식으로 파일을 생성하세요:"
+        echo "  export VSPHERE_USER='administrator@vsphere.local'"
+        echo "  export VSPHERE_PASSWORD='your-password'"
+        return 1
+    fi
+
+    # vSphere 환경변수 로드
+    set -a
+    source "$BASPHERE_VSPHERE_ENV"
+    set +a
+
+    # 환경변수 확인
+    if [[ -z "${VSPHERE_USER:-}" ]] || [[ -z "${VSPHERE_PASSWORD:-}" ]]; then
+        log_error "VSPHERE_USER 또는 VSPHERE_PASSWORD가 설정되지 않았습니다"
+        return 1
+    fi
+
+    # CAPV에서 사용하는 변수명으로 설정
+    export VSPHERE_USERNAME="${VSPHERE_USER}"
+
+    log_success "vSphere 인증 정보 로드 완료"
+}
+
+check_capi_installed() {
+    export KUBECONFIG="$MGMT_KUBECONFIG"
+
+    if kubectl get crd clusters.cluster.x-k8s.io &>/dev/null; then
+        log_info "Cluster API가 이미 설치되어 있습니다"
+        return 0
+    fi
+    return 1
+}
+
+install_capi() {
+    log_info "Cluster API 및 CAPV 초기화 중..."
+
+    export KUBECONFIG="$MGMT_KUBECONFIG"
+
+    # vSphere 설정 로드
+    local vsphere_server vsphere_datacenter vsphere_datastore vsphere_network vsphere_folder
+    vsphere_server=$(get_config '.vsphere.server')
+
+    # clusterctl init 실행
+    # CAPV는 vSphere 자격 증명이 필요함
+    clusterctl init \
+        --infrastructure vsphere:${CAPV_VERSION} \
+        --wait-providers
+
+    log_success "Cluster API 및 CAPV 설치 완료"
+}
+
+verify_capi_installation() {
+    log_info "Cluster API 설치 확인 중..."
+
+    export KUBECONFIG="$MGMT_KUBECONFIG"
+
+    # CAPI 컨트롤러 확인
+    echo ""
+    echo "=== Cluster API 컨트롤러 ==="
+    kubectl get pods -n capi-system
+
+    echo ""
+    echo "=== CAPV 컨트롤러 ==="
+    kubectl get pods -n capv-system
+
+    echo ""
+    echo "=== 설치된 Provider ==="
+    clusterctl describe --show-all-providers 2>/dev/null || true
+
+    log_success "Cluster API 설치 확인 완료"
+}
+
+# ============================================
+# vSphere 인증 Secret 생성
+# ============================================
+
+create_vsphere_secret() {
+    log_info "vSphere 인증 Secret 생성 중..."
+
+    export KUBECONFIG="$MGMT_KUBECONFIG"
+
+    # 기존 Secret 삭제 (있으면)
+    kubectl delete secret capv-credentials -n capv-system 2>/dev/null || true
+
+    # Secret 생성
+    kubectl create secret generic capv-credentials \
+        -n capv-system \
+        --from-literal=username="${VSPHERE_USERNAME}" \
+        --from-literal=password="${VSPHERE_PASSWORD}"
+
+    log_success "vSphere 인증 Secret 생성 완료"
+}
+
+# ============================================
+# 설정 파일 업데이트
+# ============================================
+
+update_basphere_config() {
+    log_info "Basphere 설정 파일 업데이트 중..."
+
+    # config.yaml에 management_cluster 섹션 추가 (없으면)
+    if ! grep -q "management_cluster:" "$BASPHERE_CONFIG" 2>/dev/null; then
+        cat >> "$BASPHERE_CONFIG" << EOF
+
+# Stage 2: Management Cluster 설정
+management_cluster:
+  kubeconfig: ${MGMT_KUBECONFIG}
+  namespace_prefix: user-
+EOF
+        log_info "config.yaml에 management_cluster 섹션 추가됨"
+    fi
+
+    # specs.yaml에 클러스터 스펙 추가 (없으면)
+    if ! grep -q "cluster_types:" "$BASPHERE_SPECS" 2>/dev/null; then
+        cat >> "$BASPHERE_SPECS" << 'EOF'
+
+# Stage 2: 클러스터 타입 정의
+cluster_types:
+  dev:
+    description: "Development cluster"
+    control_plane_count: 1
+    worker_count: 2
+    control_plane_spec: medium
+    worker_spec_default: medium
+  standard:
+    description: "Standard cluster (HA)"
+    control_plane_count: 3
+    worker_count: 3
+    control_plane_spec: medium
+    worker_spec_default: large
+
+# 클러스터 노드 스펙
+cluster_node_specs:
+  small:
+    cpu: 2
+    memory_mb: 4096
+    disk_gb: 50
+  medium:
+    cpu: 4
+    memory_mb: 8192
+    disk_gb: 100
+  large:
+    cpu: 8
+    memory_mb: 16384
+    disk_gb: 200
+
+# 클러스터 할당량
+cluster_quotas:
+  default:
+    max_clusters: 3
+    max_nodes_per_cluster: 10
+EOF
+        log_info "specs.yaml에 cluster_types 섹션 추가됨"
+    fi
+
+    log_success "Basphere 설정 파일 업데이트 완료"
+}
+
+# ============================================
+# 메인 함수
+# ============================================
+
+print_usage() {
+    cat << EOF
+Basphere Management Cluster 설정 스크립트
+
+사용법: sudo $0 [옵션]
+
+옵션:
+  --install-deps    의존성만 설치 (Docker, kind, kubectl, clusterctl)
+  --create-cluster  Management 클러스터 생성
+  --install-capi    Cluster API 및 CAPV 설치
+  --reset           기존 클러스터 삭제 후 재설치
+  --status          현재 상태 확인
+  --help            이 도움말 표시
+
+기본 동작 (옵션 없이 실행):
+  전체 설정 진행 (의존성 설치 → 클러스터 생성 → CAPI 설치)
+
+예시:
+  sudo $0              # 전체 설정
+  sudo $0 --status     # 현재 상태만 확인
+  sudo $0 --reset      # 기존 환경 초기화 후 재설정
+EOF
+}
+
+show_status() {
+    echo ""
+    echo "=== Basphere Management Cluster 상태 ==="
+    echo ""
+
+    echo -n "Docker: "
+    if check_docker &>/dev/null; then
+        echo "설치됨"
+    else
+        echo "미설치"
+    fi
+
+    echo -n "kind: "
+    if check_kind &>/dev/null; then
+        echo "설치됨 ($(kind version 2>/dev/null || echo 'unknown'))"
+    else
+        echo "미설치"
+    fi
+
+    echo -n "kubectl: "
+    if check_kubectl &>/dev/null; then
+        echo "설치됨"
+    else
+        echo "미설치"
+    fi
+
+    echo -n "clusterctl: "
+    if check_clusterctl &>/dev/null; then
+        echo "설치됨"
+    else
+        echo "미설치"
+    fi
+
+    echo ""
+    echo -n "Management 클러스터: "
+    if check_kind_cluster 2>/dev/null; then
+        echo "실행 중 (${KIND_CLUSTER_NAME})"
+
+        if [[ -f "$MGMT_KUBECONFIG" ]]; then
+            export KUBECONFIG="$MGMT_KUBECONFIG"
+
+            echo ""
+            echo "노드 상태:"
+            kubectl get nodes 2>/dev/null || echo "  연결 실패"
+
+            echo ""
+            echo -n "Cluster API: "
+            if kubectl get crd clusters.cluster.x-k8s.io &>/dev/null; then
+                echo "설치됨"
+                echo ""
+                echo "CAPI 컨트롤러:"
+                kubectl get pods -n capi-system 2>/dev/null || echo "  확인 실패"
+                echo ""
+                echo "CAPV 컨트롤러:"
+                kubectl get pods -n capv-system 2>/dev/null || echo "  확인 실패"
+            else
+                echo "미설치"
+            fi
+        fi
+    else
+        echo "미생성"
+    fi
+
+    echo ""
+}
+
+main() {
+    local action="${1:-full}"
+
+    case "$action" in
+        --help|-h)
+            print_usage
+            exit 0
+            ;;
+        --status)
+            show_status
+            exit 0
+            ;;
+        --install-deps)
+            check_root
+            log_info "=== 의존성 설치 ==="
+            check_docker || install_docker
+            check_kind || install_kind
+            check_kubectl || install_kubectl
+            check_clusterctl || install_clusterctl
+            log_success "의존성 설치 완료"
+            ;;
+        --create-cluster)
+            check_root
+            check_docker || { log_error "Docker가 필요합니다"; exit 1; }
+            check_kind || { log_error "kind가 필요합니다"; exit 1; }
+            create_kind_config
+            create_kind_cluster
+            verify_kind_cluster
+            ;;
+        --install-capi)
+            check_root
+            check_clusterctl || { log_error "clusterctl이 필요합니다"; exit 1; }
+            check_kind_cluster || { log_error "Management 클러스터가 필요합니다"; exit 1; }
+            setup_vsphere_credentials
+            install_capi
+            create_vsphere_secret
+            verify_capi_installation
+            update_basphere_config
+            ;;
+        --reset)
+            check_root
+            log_warn "기존 Management 클러스터를 삭제하고 다시 설정합니다"
+            if prompt_confirm "계속하시겠습니까?"; then
+                delete_kind_cluster
+                main full
+            fi
+            ;;
+        full|*)
+            check_root
+
+            echo ""
+            echo "=========================================="
+            echo "  Basphere Management Cluster 설정"
+            echo "=========================================="
+            echo ""
+
+            # Step 1: 의존성 설치
+            log_info "=== Step 1: 의존성 확인 및 설치 ==="
+            check_docker || install_docker
+            check_kind || install_kind
+            check_kubectl || install_kubectl
+            check_clusterctl || install_clusterctl
+
+            # Step 2: kind 클러스터 생성
+            log_info "=== Step 2: Management 클러스터 생성 ==="
+            if check_kind_cluster; then
+                log_info "기존 클러스터를 사용합니다"
+            else
+                create_kind_config
+                create_kind_cluster
+            fi
+            verify_kind_cluster
+
+            # Step 3: Cluster API 설치
+            log_info "=== Step 3: Cluster API 설치 ==="
+            if check_capi_installed; then
+                log_info "기존 CAPI 설치를 사용합니다"
+            else
+                setup_vsphere_credentials
+                install_capi
+                create_vsphere_secret
+            fi
+            verify_capi_installation
+
+            # Step 4: 설정 파일 업데이트
+            log_info "=== Step 4: 설정 파일 업데이트 ==="
+            update_basphere_config
+
+            echo ""
+            echo "=========================================="
+            log_success "Management Cluster 설정 완료!"
+            echo "=========================================="
+            echo ""
+            echo "다음 단계:"
+            echo "  1. CAPV 호환 VM 템플릿 확인 (image-builder)"
+            echo "  2. create-cluster 명령어로 클러스터 생성"
+            echo ""
+            ;;
+    esac
+}
+
+main "$@"

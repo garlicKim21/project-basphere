@@ -1,0 +1,221 @@
+#!/bin/bash
+#
+# 클러스터 목록 조회 스크립트 (사용자용)
+# Stage 2: Cluster API 기반 프로비저닝
+#
+# 사용법: list-clusters [옵션]
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 클러스터 공통 라이브러리 로드
+source /usr/local/lib/basphere/cluster-common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/cluster-common.sh"
+}
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+클러스터 목록 조회
+
+사용법: list-clusters [옵션]
+
+옵션:
+  -j, --json    JSON 형식으로 출력
+  -h, --help    도움말
+EOF
+    exit 0
+}
+
+# 클러스터 목록 조회 (API 경유)
+list_clusters_via_api() {
+    local json_output="$1"
+
+    # API 연결 확인
+    if ! check_api_connection; then
+        exit 1
+    fi
+
+    # API 호출
+    local response
+    response=$(api_call "GET" "/api/v1/clusters")
+
+    # JSON 출력 모드
+    if [[ "$json_output" == "true" ]]; then
+        echo "$response" | jq '.'
+        return 0
+    fi
+
+    # 응답 파싱
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        local count
+        count=$(echo "$response" | jq -r '.data.clusters | length')
+
+        if [[ "$count" -eq 0 ]]; then
+            echo ""
+            echo "생성된 클러스터가 없습니다."
+            echo ""
+            echo "클러스터 생성: create-cluster"
+            return 0
+        fi
+
+        echo ""
+        print_table_header "%-20s %-12s %-15s %-18s %s" "NAME" "TYPE" "STATUS" "CONTROL_PLANE_IP" "CREATED"
+
+        echo "$response" | jq -r '.data.clusters[] | [.name, .type, .status, .control_plane_ip, .created_at] | @tsv' | \
+            while IFS=$'\t' read -r name type status cp_ip created_at; do
+                # 상태에 따른 색상
+                local status_colored
+                case "$status" in
+                    ready|running)
+                        status_colored="${GREEN}${status}${NC}"
+                        ;;
+                    provisioning|pending)
+                        status_colored="${YELLOW}${status}${NC}"
+                        ;;
+                    failed|error)
+                        status_colored="${RED}${status}${NC}"
+                        ;;
+                    *)
+                        status_colored="$status"
+                        ;;
+                esac
+
+                # 날짜 포맷팅
+                local created_short
+                created_short=$(echo "$created_at" | cut -d'T' -f1)
+
+                printf "%-20s %-12s %-15b %-18s %s\n" \
+                    "$name" "$type" "$status_colored" "$cp_ip" "$created_short"
+            done
+
+        echo ""
+        echo "Total: $count cluster(s)"
+        echo ""
+        return 0
+    else
+        local error_msg
+        error_msg=$(api_get_error "$response")
+        log_error "클러스터 목록 조회 실패: $error_msg"
+        return 1
+    fi
+}
+
+# 로컬에서 직접 조회 (API 없이)
+list_clusters_local() {
+    local json_output="$1"
+
+    local clusters=()
+    while IFS='|' read -r name type status cp_ip created_at; do
+        clusters+=("$name|$type|$status|$cp_ip|$created_at")
+    done < <(list_user_clusters "$CURRENT_USER")
+
+    if [[ "$json_output" == "true" ]]; then
+        local json_array="[]"
+        for cluster_info in "${clusters[@]}"; do
+            IFS='|' read -r name type status cp_ip created_at <<< "$cluster_info"
+            json_array=$(echo "$json_array" | jq \
+                --arg name "$name" \
+                --arg type "${type:-unknown}" \
+                --arg status "${status:-unknown}" \
+                --arg cp_ip "${cp_ip:-}" \
+                --arg created_at "${created_at:-}" \
+                '. + [{name: $name, type: $type, status: $status, control_plane_ip: $cp_ip, created_at: $created_at}]')
+        done
+        echo "$json_array" | jq '.'
+        return 0
+    fi
+
+    if [[ ${#clusters[@]} -eq 0 ]]; then
+        echo ""
+        echo "생성된 클러스터가 없습니다."
+        echo ""
+        echo "클러스터 생성: create-cluster"
+        return 0
+    fi
+
+    echo ""
+    print_table_header "%-20s %-12s %-15s %-18s %s" "NAME" "TYPE" "STATUS" "CONTROL_PLANE_IP" "CREATED"
+
+    for cluster_info in "${clusters[@]}"; do
+        IFS='|' read -r name type status cp_ip created_at <<< "$cluster_info"
+
+        # 상태에 따른 색상
+        local status_colored
+        case "$status" in
+            ready|running)
+                status_colored="${GREEN}${status}${NC}"
+                ;;
+            provisioning|pending)
+                status_colored="${YELLOW}${status}${NC}"
+                ;;
+            failed|error)
+                status_colored="${RED}${status}${NC}"
+                ;;
+            *)
+                status_colored="${status:-unknown}"
+                ;;
+        esac
+
+        # 날짜 포맷팅
+        local created_short
+        created_short=$(echo "${created_at:-}" | cut -d'T' -f1)
+
+        printf "%-20s %-12s %-15b %-18s %s\n" \
+            "$name" "${type:-unknown}" "$status_colored" "${cp_ip:-pending}" "$created_short"
+    done
+
+    echo ""
+    echo "Total: ${#clusters[@]} cluster(s)"
+    echo ""
+}
+
+# 메인 함수
+main() {
+    local json_output=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -j|--json)
+                json_output=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+        esac
+    done
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    # API 연결 가능하면 API 경유, 아니면 로컬 조회
+    if check_api_connection 2>/dev/null; then
+        list_clusters_via_api "$json_output"
+    else
+        list_clusters_local "$json_output"
+    fi
+}
+
+main "$@"

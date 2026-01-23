@@ -1,0 +1,253 @@
+#!/bin/bash
+#
+# 클러스터 프로비저닝 상태 모니터링 스크립트 (사용자용)
+# Stage 2: Cluster API 기반 프로비저닝
+#
+# 사용법: watch-cluster <cluster-name>
+#
+
+set -euo pipefail
+
+# 공통 라이브러리 로드
+source /usr/local/lib/basphere/common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/common.sh"
+}
+
+# 클러스터 공통 라이브러리 로드
+source /usr/local/lib/basphere/cluster-common.sh 2>/dev/null || {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "$SCRIPT_DIR/../../lib/cluster-common.sh"
+}
+
+# 현재 사용자
+CURRENT_USER=$(get_current_user)
+
+# 사용법
+usage() {
+    cat << EOF
+클러스터 프로비저닝 상태 모니터링
+
+사용법: watch-cluster <cluster-name> [옵션]
+
+옵션:
+  -i, --interval <sec>  새로고침 간격 (기본: 5초)
+  -w, --wait            클러스터가 Ready 상태가 될 때까지 대기
+  --no-color            색상 출력 비활성화
+  -h, --help            도움말
+
+예시:
+  watch-cluster my-cluster           # 상태 모니터링
+  watch-cluster my-cluster -w        # Ready까지 대기
+  watch-cluster my-cluster -i 10     # 10초 간격으로 새로고침
+EOF
+    exit 0
+}
+
+# 클러스터 상태 표시
+show_cluster_status() {
+    local cluster_name="$1"
+    local no_color="$2"
+    local namespace
+
+    namespace=$(get_user_namespace "$CURRENT_USER")
+
+    # 색상 설정
+    local status_ready status_provisioning status_failed status_pending
+    if [[ "$no_color" == "true" ]]; then
+        status_ready="Ready"
+        status_provisioning="Provisioning"
+        status_failed="Failed"
+        status_pending="Pending"
+    else
+        status_ready="${GREEN}Ready${NC}"
+        status_provisioning="${YELLOW}Provisioning${NC}"
+        status_failed="${RED}Failed${NC}"
+        status_pending="${CYAN}Pending${NC}"
+    fi
+
+    # 화면 클리어
+    clear
+
+    echo "========================================"
+    echo "  클러스터 상태: $cluster_name"
+    echo "========================================"
+    echo ""
+
+    # 로컬 메타데이터
+    local cluster_dir
+    cluster_dir=$(get_cluster_dir "$CURRENT_USER" "$cluster_name")
+
+    if [[ -f "$cluster_dir/metadata.json" ]]; then
+        local type cp_ip worker_count created_at
+        type=$(jq -r '.type // "unknown"' "$cluster_dir/metadata.json")
+        cp_ip=$(jq -r '.control_plane_ip // "pending"' "$cluster_dir/metadata.json")
+        worker_count=$(jq -r '.worker_count // 0' "$cluster_dir/metadata.json")
+        created_at=$(jq -r '.created_at // ""' "$cluster_dir/metadata.json")
+
+        echo "기본 정보:"
+        echo "  타입: $type"
+        echo "  Control Plane IP: $cp_ip"
+        echo "  Worker 노드 수: $worker_count"
+        echo "  생성 시작: $created_at"
+        echo ""
+    fi
+
+    # Management 클러스터에서 CAPI 상태 조회
+    if check_management_cluster 2>/dev/null; then
+        echo "Cluster API 상태:"
+
+        # Cluster 리소스 상태
+        local cluster_phase
+        cluster_phase=$(mgmt_kubectl get cluster "$cluster_name" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+
+        echo "  Phase: $cluster_phase"
+
+        # Control Plane 상태
+        echo ""
+        echo "Control Plane:"
+        mgmt_kubectl get kubeadmcontrolplane -n "$namespace" -l "cluster.x-k8s.io/cluster-name=$cluster_name" 2>/dev/null || echo "  (조회 실패)"
+
+        # Machine 상태
+        echo ""
+        echo "Machines:"
+        mgmt_kubectl get machines -n "$namespace" -l "cluster.x-k8s.io/cluster-name=$cluster_name" 2>/dev/null || echo "  (조회 실패)"
+
+        # MachineDeployment 상태
+        echo ""
+        echo "MachineDeployments (Workers):"
+        mgmt_kubectl get machinedeployment -n "$namespace" -l "cluster.x-k8s.io/cluster-name=$cluster_name" 2>/dev/null || echo "  (조회 실패)"
+
+        # Conditions
+        echo ""
+        echo "Conditions:"
+        mgmt_kubectl get cluster "$cluster_name" -n "$namespace" -o jsonpath='{range .status.conditions[*]}{.type}: {.status} ({.reason}){"\n"}{end}' 2>/dev/null || echo "  (조회 실패)"
+
+        # 클러스터가 Ready인지 확인
+        if [[ "$cluster_phase" == "Provisioned" ]]; then
+            echo ""
+            echo "=========================================="
+            printf "${GREEN}클러스터가 준비되었습니다!${NC}\n"
+            echo "=========================================="
+            echo ""
+            echo "다음 단계:"
+            echo "  1. kubeconfig 가져오기: get-kubeconfig $cluster_name -o ~/.kube/${cluster_name}.yaml"
+            echo "  2. 클러스터 접속: export KUBECONFIG=~/.kube/${cluster_name}.yaml"
+            echo "  3. 노드 확인: kubectl get nodes"
+            return 0
+        fi
+    else
+        echo "(Management 클러스터에 연결할 수 없음)"
+    fi
+
+    echo ""
+    echo "마지막 업데이트: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "종료: Ctrl+C"
+
+    return 1  # 아직 Ready가 아님
+}
+
+# 단일 상태 조회 (API 경유)
+get_cluster_status_api() {
+    local cluster_name="$1"
+
+    if ! check_api_connection 2>/dev/null; then
+        return 1
+    fi
+
+    local response
+    response=$(api_call "GET" "/api/v1/clusters/$cluster_name/status")
+
+    local success
+    success=$(api_check_success "$response")
+
+    if [[ "$success" == "true" ]]; then
+        echo "$response" | jq -r '.data.status // "unknown"'
+        return 0
+    fi
+
+    return 1
+}
+
+# 메인 함수
+main() {
+    local cluster_name=""
+    local interval=5
+    local wait_ready=false
+    local no_color=false
+
+    # 인자 파싱
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -i|--interval)
+                interval="$2"
+                shift 2
+                ;;
+            -w|--wait)
+                wait_ready=true
+                shift
+                ;;
+            --no-color)
+                no_color=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                ;;
+            -*)
+                log_error "알 수 없는 옵션: $1"
+                usage
+                ;;
+            *)
+                if [[ -z "$cluster_name" ]]; then
+                    cluster_name="$1"
+                else
+                    log_error "인자가 너무 많습니다"
+                    usage
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$cluster_name" ]]; then
+        log_error "클러스터 이름을 지정하세요"
+        usage
+    fi
+
+    # 사용자 확인
+    if ! user_exists "$CURRENT_USER"; then
+        log_error "Basphere 사용자가 아닙니다: $CURRENT_USER"
+        exit 1
+    fi
+
+    # 클러스터 존재 확인
+    if ! cluster_exists "$CURRENT_USER" "$cluster_name"; then
+        log_error "클러스터를 찾을 수 없습니다: $cluster_name"
+        exit 1
+    fi
+
+    # Wait 모드
+    if [[ "$wait_ready" == "true" ]]; then
+        log_info "클러스터가 Ready 상태가 될 때까지 대기합니다..."
+        log_info "종료: Ctrl+C"
+        echo ""
+
+        while true; do
+            if show_cluster_status "$cluster_name" "$no_color"; then
+                # Ready 상태
+                exit 0
+            fi
+            sleep "$interval"
+        done
+    else
+        # 일회성 상태 표시 (watch 명령어 없이)
+        show_cluster_status "$cluster_name" "$no_color" || true
+
+        echo ""
+        echo "실시간 모니터링: watch -n $interval watch-cluster $cluster_name"
+        echo "Ready까지 대기: watch-cluster $cluster_name -w"
+    fi
+}
+
+main "$@"

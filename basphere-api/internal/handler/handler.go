@@ -99,6 +99,15 @@ func (h *Handler) Router() http.Handler {
 
 		// Quota
 		r.Get("/quota", h.apiGetQuota)
+
+		// Cluster management (Stage 2)
+		r.Post("/clusters", h.apiCreateCluster)
+		r.Get("/clusters", h.apiListClusters)
+		r.Get("/clusters/quota", h.apiGetClusterQuota)
+		r.Get("/clusters/{name}", h.apiGetCluster)
+		r.Delete("/clusters/{name}", h.apiDeleteCluster)
+		r.Get("/clusters/{name}/kubeconfig", h.apiGetKubeconfig)
+		r.Get("/clusters/{name}/status", h.apiGetClusterStatus)
 	})
 
 	// Health check
