@@ -84,7 +84,6 @@ project-basphere/
 │   ├── scripts/            # CLI 스크립트
 │   ├── lib/                # 공통 함수 라이브러리
 │   ├── templates/          # Terraform 템플릿
-│   ├── config/             # 설정 파일 예시
 │   └── docs/               # 사용자 가이드
 │
 ├── basphere-api/           # Go 기반 REST API 서버
@@ -92,10 +91,12 @@ project-basphere/
 │   ├── internal/           # 내부 패키지
 │   └── web/                # HTML 템플릿
 │
-├── project-base/           # IDP 설계 문서
-│   ├── architecture.yaml   # 아키텍처 설계
-│   ├── user-scenario.yaml  # 사용자 시나리오
-│   └── project-concept.yaml# 프로젝트 컨셉
+├── docs/                   # 📚 문서
+│   ├── design/             # IDP 설계 (vision, architecture, roadmap)
+│   ├── operations/         # 운영 (installation, troubleshooting, security)
+│   └── development/        # 개발 (contributing)
+│
+├── deploy/                 # 배포 설정 (nginx, systemd)
 │
 └── CLAUDE.md               # 개발 컨텍스트 (AI 협업용)
 ```
@@ -160,13 +161,17 @@ sudo basphere-admin user approve <username>
 sudo basphere-admin user list
 ```
 
-## 설치
+## 문서
 
-상세한 설치 가이드는 각 컴포넌트의 README를 참조하세요:
-
-- [CLI 설치 가이드](basphere-cli/README.md)
-- [API 서버 가이드](basphere-api/README.md)
-- [사용자 가이드](basphere-cli/docs/user-guide.md)
+| 문서 | 설명 |
+|------|------|
+| [docs/design/vision.md](docs/design/vision.md) | 프로젝트 비전 및 목표 |
+| [docs/design/architecture.md](docs/design/architecture.md) | 전체 아키텍처 |
+| [docs/design/roadmap.md](docs/design/roadmap.md) | Stage별 상세 계획 |
+| [docs/operations/installation.md](docs/operations/installation.md) | 새 환경 설치 가이드 |
+| [basphere-cli/README.md](basphere-cli/README.md) | CLI 가이드 |
+| [basphere-api/README.md](basphere-api/README.md) | API 서버 가이드 |
+| [basphere-cli/docs/user-guide.md](basphere-cli/docs/user-guide.md) | 사용자 가이드 |
 
 ## IDP 비전
 

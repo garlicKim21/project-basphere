@@ -1,9 +1,0 @@
-Type: IPsec
-VPN: Site-to-Site
-구간: on-premise와 OCI 간
-용도: 홈랩과 OCI 간 연결
----
-Type: WireGuard
-VPN: Server-Client
-구간: 사용자와 홈랩
-용도: 사용자와 홈랩 간 연결
