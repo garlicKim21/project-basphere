@@ -215,7 +215,7 @@ Host bastion
     IdentityFile ~/.ssh/id_ed25519
 
 # VM 접속 (Bastion 경유)
-Host 10.254.0.*
+Host 10.254.*
     ProxyJump bastion
     User &lt;user-id&gt;
     IdentityFile ~/.ssh/id_ed25519</code></pre>
