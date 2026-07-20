@@ -131,6 +131,7 @@ delete-vm test
 
 - vSphere customization과 cloud-init 함께 사용 시 네트워크 설정 충돌 주의
 - snap yq는 /etc 접근 불가 → 바이너리 버전 사용
+- **OS 이미지에 open-vm-tools 필수** (guestinfo 전달 통로) — qcow2 기반 이미지는 주입 필요, [docs/operations/os-images.md](docs/operations/os-images.md) 참조
 - **Ubuntu 24.04 cloud-init**: 네트워크 설정은 `guestinfo.metadata` 안에 `network` 키로 포함
 
 ## 📚 상세 문서
