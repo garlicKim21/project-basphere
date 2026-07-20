@@ -226,6 +226,7 @@ data "vsphere_content_library_item" "os_image" {
   type       = "ovf"
 }
 
+# 추가 네트워크 존재 검증용 (VM 생성 전에 잘못된 포트그룹을 조기 발견)
 data "vsphere_network" "extra" {
   for_each      = toset(var.extra_networks)
   name          = each.value
@@ -348,15 +349,6 @@ resource "vsphere_virtual_machine" "vm" {
     adapter_type = "vmxnet3"
   }
 
-  # 추가 네트워크 (고급 옵션, IP 미설정 - 링크만 연결)
-  dynamic "network_interface" {
-    for_each = var.extra_networks
-    content {
-      network_id   = data.vsphere_network.extra[network_interface.value].id
-      adapter_type = "vmxnet3"
-    }
-  }
-
   disk {
     label            = "disk0"
     size             = var.disk_size
@@ -406,6 +398,29 @@ resource "vsphere_virtual_machine" "vm" {
     ]
   }
 
+}
+
+# ============================================
+# 추가 네트워크 (고급 옵션)
+# ============================================
+# OVF 라이브러리 배포는 NIC 하드웨어 커스터마이징을 지원하지 않으므로(VMware 제약)
+# VM 생성 완료 후 govc로 hot-add한다. IP는 미설정(링크만 연결).
+# NIC은 VM에 귀속되어 VM 삭제 시 함께 제거된다.
+
+resource "terraform_data" "extra_nic" {
+  count = length(var.extra_networks)
+
+  triggers_replace = [vsphere_virtual_machine.vm.id, var.extra_networks[count.index]]
+
+  provisioner "local-exec" {
+    # 인증은 terraform 프로세스 환경변수(VSPHERE_USER/PASSWORD)를 셸에서 그대로 사용
+    command = "GOVC_USERNAME=\"$${VSPHERE_USER}\" GOVC_PASSWORD=\"$${VSPHERE_PASSWORD}\" govc vm.network.add -vm \"${var.vsphere_vm_name}\" -net \"${var.extra_networks[count.index]}\" -net.adapter vmxnet3"
+    environment = {
+      GOVC_URL        = "https://${var.vsphere_server}"
+      GOVC_INSECURE   = var.vsphere_allow_unverified_ssl ? "1" : "0"
+      GOVC_DATACENTER = var.datacenter
+    }
+  }
 }
 
 # ============================================

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -58,7 +59,7 @@ func (h *Handler) apiCreateVM(w http.ResponseWriter, r *http.Request) {
 
 	if quota.UsedVMs+input.Count > quota.MaxVMs {
 		h.jsonError(w, http.StatusForbidden, "VM quota exceeded",
-			"current: "+string(rune(quota.UsedVMs+'0'))+", requested: "+string(rune(input.Count+'0'))+", max: "+string(rune(quota.MaxVMs+'0')))
+			"current: "+strconv.Itoa(quota.UsedVMs)+", requested: "+strconv.Itoa(input.Count)+", max: "+strconv.Itoa(quota.MaxVMs))
 		return
 	}
 
@@ -84,7 +85,7 @@ func (h *Handler) apiCreateVM(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i <= input.Count; i++ {
 		vmName := input.Name
 		if input.Count > 1 {
-			vmName = input.Name + "-" + string(rune(i+'0'-1))
+			vmName = input.Name + "-" + strconv.Itoa(i)
 		}
 
 		vmInput := &model.CreateVMInput{

@@ -136,11 +136,25 @@ check_dependencies() {
         install_terraform
     fi
 
+    # govc 확인 및 설치 (추가 NIC hot-add 등 vSphere 직접 제어용)
+    if ! command -v govc &> /dev/null; then
+        log_info "govc 설치 중..."
+        local govc_url="https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz"
+        if curl -sL "$govc_url" | tar xz -C /usr/local/bin govc; then
+            chmod +x /usr/local/bin/govc
+            log_success "govc 설치 완료"
+        else
+            log_error "govc 다운로드 실패"
+            return 1
+        fi
+    fi
+
     # 최종 확인
     local missing=()
     command -v jq &> /dev/null || missing+=("jq")
     command -v yq &> /dev/null || missing+=("yq")
     command -v terraform &> /dev/null || missing+=("terraform")
+    command -v govc &> /dev/null || missing+=("govc")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         log_error "다음 패키지 설치에 실패했습니다: ${missing[*]}"
