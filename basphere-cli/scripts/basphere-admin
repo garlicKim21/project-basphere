@@ -12,6 +12,7 @@
 #   user pending [username]               대기 중인 등록 요청 목록/상세
 #   user approve <username>               등록 요청 승인
 #   user reject <username> [--reason]     등록 요청 거부
+#   vm console-password <user> <vm>       VM 콘솔 관리자 비밀번호 조회
 #   key pending [username]                대기 중인 키 변경 요청 목록/상세
 #   key approve <username>                키 변경 요청 승인
 #   key reject <username> [--reason]      키 변경 요청 거부
@@ -54,6 +55,8 @@ Basphere 관리자 CLI v${VERSION}
   key approve <username>                키 변경 요청 승인
   key reject <username> [--reason]      키 변경 요청 거부
 
+  vm console-password <user> <vm>       VM 콘솔 관리자(bsadmin) 비밀번호 조회
+
 옵션:
   -h, --help      도움말 출력
   -v, --version   버전 출력
@@ -67,6 +70,8 @@ Basphere 관리자 CLI v${VERSION}
 
   basphere-admin key pending
   basphere-admin key approve kimht
+
+  basphere-admin vm console-password kimht bundle-build
   basphere-admin key reject kimht --reason "본인 확인 실패"
 EOF
     exit 0
@@ -462,6 +467,37 @@ user_show() {
     echo ""
     echo "IP 할당 현황:"
     "$INTERNAL_SCRIPTS/list-user-ips" "$username" 2>/dev/null || echo "  정보 없음"
+}
+
+# VM 콘솔 관리자 비밀번호 조회 (vSphere 웹 콘솔 로그인용)
+vm_console_password() {
+    local username="${1:-}"
+    local vm_name="${2:-}"
+
+    if [[ -z "$username" || -z "$vm_name" ]]; then
+        log_error "사용자와 VM 이름이 필요합니다"
+        echo "사용법: basphere-admin vm console-password <username> <vm-name>"
+        exit 1
+    fi
+
+    local pw_file="$BASPHERE_DATA_DIR/console-passwords/$username/${vm_name}.txt"
+    if [[ ! -f "$pw_file" ]]; then
+        log_error "콘솔 비밀번호를 찾을 수 없습니다: $username/$vm_name"
+        log_info "이 기능 도입 이전에 생성된 VM은 콘솔 비밀번호가 없습니다"
+        exit 1
+    fi
+
+    local password
+    password=$(cat "$pw_file")
+
+    echo ""
+    echo "=== VM 콘솔 관리자 로그인 ($username/$vm_name) ==="
+    echo ""
+    echo "  계정:     bsadmin"
+    echo "  비밀번호: $password"
+    echo ""
+    echo "  vSphere 웹 콘솔에서만 사용 (SSH는 키 전용으로 차단됨)"
+    echo ""
 }
 
 # 사용자 삭제
@@ -1157,6 +1193,21 @@ main() {
                 *)
                     log_error "알 수 없는 user 명령: $subcommand"
                     echo "사용 가능한 명령: list, show, delete, purge, pending, approve, reject"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        vm)
+            local subcommand="${1:-}"
+            shift || true
+
+            case "$subcommand" in
+                console-password)
+                    vm_console_password "$@"
+                    ;;
+                *)
+                    log_error "알 수 없는 vm 명령: $subcommand"
+                    echo "사용 가능한 명령: console-password"
                     exit 1
                     ;;
             esac

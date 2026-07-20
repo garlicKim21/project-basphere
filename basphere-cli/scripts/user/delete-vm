@@ -107,6 +107,9 @@ delete_single_vm_api_mode() {
     # Terraform 디렉토리 삭제
     rm -rf "$tf_dir"
 
+    # 콘솔 관리자 비번 파일 삭제
+    rm -f "$BASPHERE_DATA_DIR/console-passwords/$user/${vm_name}.txt"
+
     # 감사 로그
     audit_log "DELETE_VM" "$vm_name" "user=$user,os=$os_type,ip=$ip_address"
 

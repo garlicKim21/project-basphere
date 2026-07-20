@@ -273,12 +273,23 @@ locals {
   userdata_base = {
     hostname         = var.vm_name
     manage_etc_hosts = true
+    # SSH는 전 계정 키 전용 (이미지 기본값에 의존하지 않고 명시적으로 비번 SSH 차단)
+    ssh_pwauth = false
     users = [
       {
         name                = "${USER}"
         sudo                = "ALL=(ALL) NOPASSWD:ALL"
         shell               = "/bin/bash"
         ssh_authorized_keys = [var.ssh_public_key]
+      },
+      # 콘솔 전용 관리자 계정: vSphere 웹 콘솔에서 비번 로그인용
+      # SSH 키 없음(SSH 불가) + VM별 랜덤 비번(해시). ssh_pwauth=false라 SSH로는 접근 불가.
+      {
+        name           = "${ADMIN_USER}"
+        sudo           = "ALL=(ALL) NOPASSWD:ALL"
+        shell          = "/bin/bash"
+        lock_passwd    = false
+        hashed_passwd  = "${ADMIN_PASSWORD_HASH}"
       }
     ]
     package_update  = false

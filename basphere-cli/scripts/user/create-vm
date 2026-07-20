@@ -175,6 +175,13 @@ get_spec_details() {
 EXTRA_DISKS=()
 EXTRA_NICS=()
 
+# 콘솔 전용 관리자 계정 (vSphere 웹 콘솔 비번 로그인용)
+CONSOLE_ADMIN_USER="bsadmin"
+# 관리자 비번 저장 위치 (root 전용)
+CONSOLE_PW_DIR="$BASPHERE_DATA_DIR/console-passwords"
+# 렌더링 시점에 채워지는 해시 (create_single_vm_api_mode에서 설정)
+ADMIN_PASSWORD_HASH=""
+
 # 추가 네트워크 카탈로그 키 목록
 get_network_catalog() {
     yq eval '.extra_network_catalog | keys | .[]' "$BASPHERE_CONFIG" 2>/dev/null
@@ -386,7 +393,38 @@ generate_terraform_file() {
         -e "s|\${SSH_PUBLIC_KEY}|$ssh_public_key|g" \
         -e "s|\${EXTRA_DISKS}|$extra_disks_hcl|g" \
         -e "s|\${EXTRA_NETWORKS}|$extra_networks_hcl|g" \
+        -e "s|\${ADMIN_USER}|$CONSOLE_ADMIN_USER|g" \
+        -e "s|\${ADMIN_PASSWORD_HASH}|$ADMIN_PASSWORD_HASH|g" \
         "$template_file" > "$output_dir/main.tf"
+}
+
+# 콘솔 관리자 비번 생성 → 해시는 ADMIN_PASSWORD_HASH 전역에 설정, 평문은 root 전용 파일에 저장
+# 성공 시 0, 실패 시 1
+setup_console_password() {
+    local user="$1"
+    local vm_name="$2"
+
+    local plain salt hash
+    plain=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)
+    salt=$(tr -dc 'A-Za-z0-9./' < /dev/urandom | head -c 16)
+    hash=$(openssl passwd -6 -salt "$salt" "$plain" 2>/dev/null)
+
+    if [[ -z "$hash" ]]; then
+        echo "{\"error\": \"Failed to hash console password\"}" >&2
+        return 1
+    fi
+
+    # 평문 저장 (root 전용)
+    local pw_dir="$CONSOLE_PW_DIR/$user"
+    mkdir -p "$pw_dir"
+    chmod 700 "$CONSOLE_PW_DIR" "$pw_dir"
+    local pw_file="$pw_dir/${vm_name}.txt"
+    printf '%s\n' "$plain" > "$pw_file"
+    chmod 600 "$pw_file"
+    chown root:root "$pw_file" 2>/dev/null || true
+
+    ADMIN_PASSWORD_HASH="$hash"
+    return 0
 }
 
 # VM 생성 실행 (API 모드 - Terraform 직접 실행)
@@ -415,10 +453,19 @@ create_single_vm_api_mode() {
     # Terraform 디렉토리 생성
     mkdir -p "$tf_dir"
 
+    # 콘솔 관리자 비번 생성 (해시는 렌더링에 사용, 평문은 root 전용 저장)
+    local pw_file="$CONSOLE_PW_DIR/$user/${vm_name}.txt"
+    if ! setup_console_password "$user" "$vm_name"; then
+        "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
+        rm -rf "$tf_dir"
+        return 1
+    fi
+
     # Terraform 파일 생성
     if ! generate_terraform_file "$vm_name" "$os_type" "$spec" "$ip_address" "$user" "$tf_dir"; then
         # 실패 시 IP 반환
         "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
+        rm -f "$pw_file"
         rm -rf "$tf_dir"
         return 1
     fi
@@ -461,6 +508,7 @@ EOF
     if [[ ! -f "$BASPHERE_VSPHERE_ENV" ]]; then
         echo "{\"error\": \"vSphere credentials not found\"}" >&2
         "$INTERNAL_SCRIPTS/release-ip" "$ip_address" "$user" 2>/dev/null || true
+        rm -f "$pw_file"
         rm -rf "$tf_dir"
         return 1
     fi

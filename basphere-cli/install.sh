@@ -172,6 +172,11 @@ create_directories() {
     # 데이터 디렉토리
     mkdir -p /var/lib/basphere/{ipam,terraform,clusters,users,pending,templates}
 
+    # 콘솔 관리자 비번 저장소 (root 전용)
+    mkdir -p /var/lib/basphere/console-passwords
+    chmod 700 /var/lib/basphere/console-passwords
+    chown root:root /var/lib/basphere/console-passwords
+
     # 로그 디렉토리
     mkdir -p /var/log/basphere
 
