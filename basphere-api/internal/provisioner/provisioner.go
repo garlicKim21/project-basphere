@@ -209,7 +209,11 @@ func (p *BashProvisioner) CreateVM(username string, input *model.CreateVMInput) 
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to create VM: %s\nstderr: %s", err, stderr.String())
+		// create-vm --api reports its reason as {"error": "..."} on stderr; surface it cleanly
+		if reason := extractScriptError(stderr.Bytes()); reason != "" {
+			return nil, fmt.Errorf("%s", reason)
+		}
+		return nil, fmt.Errorf("failed to create VM: %s", err)
 	}
 
 	// Parse JSON output
@@ -219,6 +223,24 @@ func (p *BashProvisioner) CreateVM(username string, input *model.CreateVMInput) 
 	}
 
 	return &vm, nil
+}
+
+// extractScriptError pulls the message out of a {"error": "..."} line emitted by
+// the bash scripts on stderr, ignoring any surrounding log lines. Returns "" if none found.
+func extractScriptError(stderr []byte) string {
+	for _, line := range bytes.Split(stderr, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("{")) {
+			continue
+		}
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(line, &payload); err == nil && payload.Error != "" {
+			return payload.Error
+		}
+	}
+	return ""
 }
 
 // DeleteVM deletes a VM

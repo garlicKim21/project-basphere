@@ -597,34 +597,48 @@ create_vm_via_api() {
     local success
     success=$(api_check_success "$response")
 
-    if [[ "$success" == "true" ]]; then
-        local created failed
-        created=$(echo "$response" | jq -r '.data.created // 0')
-        failed=$(echo "$response" | jq -r '.data.failed // 0')
+    # 성공/부분성공/전체실패 모두 .data에 created/failed/errors가 담겨 옴
+    local created failed
+    created=$(echo "$response" | jq -r '.data.created // 0')
+    failed=$(echo "$response" | jq -r '.data.failed // 0')
 
-        # 생성된 VM 정보 출력
-        echo ""
-        echo "=========================================="
-        echo "생성 완료: $created / $count"
-        if [[ $failed -gt 0 ]]; then
-            echo "실패: $failed"
+    echo ""
+    echo "=========================================="
+    echo "생성 완료: $created / $count"
+    if [[ "$failed" -gt 0 ]]; then
+        echo "실패: $failed"
+    fi
+    echo "=========================================="
+
+    # 생성된 VM 정보 출력
+    echo "$response" | jq -r '.data.vms[]? | "  - \(.name): \(.ip_address) (\(.status))"'
+
+    # 실패 사유 출력 (있으면)
+    if [[ "$failed" -gt 0 ]] || [[ "$success" != "true" ]]; then
+        local errors
+        errors=$(echo "$response" | jq -r '.data.errors[]?' 2>/dev/null)
+        if [[ -n "$errors" ]]; then
+            echo ""
+            log_error "실패 사유:"
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && echo "  - $line"
+            done <<< "$errors"
+        else
+            # errors 배열이 없으면 상위 메시지라도 표시
+            local error_msg
+            error_msg=$(api_get_error "$response")
+            [[ -n "$error_msg" ]] && log_error "VM 생성 실패: $error_msg"
         fi
-        echo "=========================================="
+    fi
 
-        # 각 VM 정보 출력
-        echo "$response" | jq -r '.data.vms[]? | "  - \(.name): \(.ip_address) (\(.status))"'
-
+    if [[ "$created" -gt 0 ]]; then
         echo ""
         echo "VM 접속: ssh <login_user>@<IP_ADDRESS>"
         echo "VM 목록: list-vms"
-
-        return 0
-    else
-        local error_msg
-        error_msg=$(api_get_error "$response")
-        log_error "VM 생성 실패: $error_msg"
-        return 1
     fi
+
+    # 하나라도 실패하면 비정상 종료 코드
+    [[ "$failed" -eq 0 && "$success" == "true" ]]
 }
 
 # 메인 함수
