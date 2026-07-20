@@ -53,3 +53,12 @@ defaults:
   vm_spec: "small"                        # 기본 VM 스펙
   cluster_spec: "dev"                     # 기본 클러스터 스펙
   vm_username: "ubuntu"                   # VM 기본 사용자
+
+# 고급 옵션 한도 (create-vm 추가 디스크/네트워크)
+custom_options:
+  extra_disks:
+    max_count: 3                          # VM당 추가 디스크 최대 개수
+    min_gb: 10                            # 디스크당 최소 크기
+    max_gb: 500                           # 디스크당 최대 크기
+  extra_networks:
+    max_count: 1                          # VM당 추가 네트워크 최대 개수

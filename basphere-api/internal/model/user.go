@@ -25,8 +25,8 @@ type RegistrationRequest struct {
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 	// Filled when approved or rejected
-	ProcessedBy string `json:"processed_by,omitempty"`
-	ProcessedAt string `json:"processed_at,omitempty"`
+	ProcessedBy  string `json:"processed_by,omitempty"`
+	ProcessedAt  string `json:"processed_at,omitempty"`
 	RejectReason string `json:"reject_reason,omitempty"`
 }
 

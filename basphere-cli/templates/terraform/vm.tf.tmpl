@@ -160,6 +160,21 @@ variable "interface" {
   default     = "${INTERFACE}"
 }
 
+variable "extra_disks" {
+  description = "Extra disks: size in GB, mode auto(format+mount) or raw"
+  type = list(object({
+    size = number
+    mode = string
+  }))
+  default = ${EXTRA_DISKS}
+}
+
+variable "extra_networks" {
+  description = "Extra network port groups (link only, no IP configuration)"
+  type        = list(string)
+  default     = ${EXTRA_NETWORKS}
+}
+
 # ============================================
 # Data Sources
 # ============================================
@@ -185,6 +200,12 @@ data "vsphere_network" "network" {
 
 data "vsphere_virtual_machine" "template" {
   name          = var.template
+  datacenter_id = data.vsphere_datacenter.dc.id
+}
+
+data "vsphere_network" "extra" {
+  for_each      = toset(var.extra_networks)
+  name          = each.value
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
@@ -214,30 +235,67 @@ locals {
             addresses: ${jsonencode(var.dns_servers)}
   META
 
+  # 추가 디스크 중 자동 마운트(auto) 디스크의 게스트 디바이스/마운트 경로
+  # 추가 디스크 N은 SCSI unit N → /dev/sd{b,c,...}, 마운트 경로는 /dataN
+  auto_disks = [
+    for idx, d in var.extra_disks : {
+      device = "/dev/sd${substr("abcdefgh", idx + 1, 1)}"
+      mount  = "/data${idx + 1}"
+    } if d.mode == "auto"
+  ]
+
   # cloud-init userdata
   # hostname은 짧은 이름 사용
-  userdata = <<-EOF
-    #cloud-config
-    hostname: ${var.vm_name}
-    manage_etc_hosts: true
-    users:
-      - name: ${USER}
-        sudo: ALL=(ALL) NOPASSWD:ALL
-        shell: /bin/bash
-        ssh_authorized_keys:
-          - ${var.ssh_public_key}
-    package_update: false
-    package_upgrade: false
-    growpart:
-      mode: auto
-      devices: ['/']
-      ignore_growroot_disabled: false
-    runcmd:
-      - echo "Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized" > /var/log/basphere-init.log
-      - echo "Owner: ${var.owner}" >> /var/log/basphere-init.log
-      - echo "IP: ${var.ip_address}" >> /var/log/basphere-init.log
-    final_message: "Basphere VM is ready after $UPTIME seconds"
-  EOF
+  userdata_base = {
+    hostname         = var.vm_name
+    manage_etc_hosts = true
+    users = [
+      {
+        name                = "${USER}"
+        sudo                = "ALL=(ALL) NOPASSWD:ALL"
+        shell               = "/bin/bash"
+        ssh_authorized_keys = [var.ssh_public_key]
+      }
+    ]
+    package_update  = false
+    package_upgrade = false
+    growpart = {
+      mode                     = "auto"
+      devices                  = ["/"]
+      ignore_growroot_disabled = false
+    }
+    runcmd = [
+      "echo \"Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized\" > /var/log/basphere-init.log",
+      "echo \"Owner: ${var.owner}\" >> /var/log/basphere-init.log",
+      "echo \"IP: ${var.ip_address}\" >> /var/log/basphere-init.log",
+    ]
+    final_message = "Basphere VM is ready after $UPTIME seconds"
+  }
+
+  # auto 디스크는 cloud-init으로 GPT 파티션 + ext4 포맷 후 마운트 (nofail: 디스크 없어도 부팅 지속)
+  # auto 디스크가 없으면 빈 컬렉션이 되며 cloud-init이 무시함
+  userdata_disks = {
+    disk_setup = {
+      for d in local.auto_disks : d.device => {
+        table_type = "gpt"
+        layout     = true
+        overwrite  = false
+      }
+    }
+    fs_setup = [
+      for d in local.auto_disks : {
+        device     = d.device
+        partition  = "auto"
+        filesystem = "ext4"
+        overwrite  = false
+      }
+    ]
+    mounts = [
+      for d in local.auto_disks : ["${d.device}1", d.mount, "ext4", "defaults,nofail", "0", "2"]
+    ]
+  }
+
+  userdata = join("\n", ["#cloud-config", yamlencode(merge(local.userdata_base, local.userdata_disks))])
 }
 
 # ============================================
@@ -266,11 +324,32 @@ resource "vsphere_virtual_machine" "vm" {
     adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
   }
 
+  # 추가 네트워크 (고급 옵션, IP 미설정 - 링크만 연결)
+  dynamic "network_interface" {
+    for_each = var.extra_networks
+    content {
+      network_id   = data.vsphere_network.extra[network_interface.value].id
+      adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+    }
+  }
+
   disk {
     label            = "disk0"
     size             = var.disk_size
     thin_provisioned = true
     eagerly_scrub    = false
+  }
+
+  # 추가 디스크 (고급 옵션)
+  dynamic "disk" {
+    for_each = var.extra_disks
+    content {
+      label            = "disk${disk.key + 1}"
+      size             = disk.value.size
+      unit_number      = disk.key + 1
+      thin_provisioned = true
+      eagerly_scrub    = false
+    }
   }
 
   # vApp properties 전달을 위한 CDROM 장치

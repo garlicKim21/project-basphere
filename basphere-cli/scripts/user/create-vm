@@ -43,12 +43,15 @@ VM 생성
   -o, --os <os>         OS 종류 (ubuntu-24.04, rocky-10)
   -s, --spec <spec>     스펙 (small, medium, large)
   -c, --count <count>   생성할 VM 수 (기본값: 1)
+  --disk <GB[:auto|raw]>  추가 디스크 (반복 가능, 기본 auto=포맷+마운트)
+  --nic <network>       추가 네트워크 연결 (반복 가능, IP 미설정)
   -h, --help            도움말
 
 예시:
   create-vm                                    # 대화형 모드
   create-vm -n my-server -o ubuntu-24.04 -s medium   # 명령행 모드
   create-vm -n web -o rocky-10 -s small -c 3         # 3대 생성
+  create-vm -n db -o ubuntu-24.04 -s large --disk 200 --disk 50:raw --nic 98-air-gapped
 EOF
     exit 0
 }
@@ -140,6 +143,97 @@ get_spec_details() {
     echo "$cpu vCPU, ${memory_gb}GB RAM, ${disk}GB Disk"
 }
 
+# ============================================
+# 고급 옵션 (추가 디스크/네트워크)
+# ============================================
+
+# 전역: "SIZE:MODE" 항목 배열 / 네트워크 카탈로그 키 배열
+EXTRA_DISKS=()
+EXTRA_NICS=()
+
+# 추가 네트워크 카탈로그 키 목록
+get_network_catalog() {
+    yq eval '.extra_network_catalog | keys | .[]' "$BASPHERE_CONFIG" 2>/dev/null
+}
+
+# 카탈로그 키 → vSphere 포트그룹 이름
+get_network_port_group() {
+    local name="$1"
+    local value
+    value=$(yq eval ".extra_network_catalog[\"$name\"].port_group" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo ""
+    else
+        echo "$value"
+    fi
+}
+
+get_network_catalog_description() {
+    local name="$1"
+    local value
+    value=$(yq eval ".extra_network_catalog[\"$name\"].description" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "$name"
+    else
+        echo "$value"
+    fi
+}
+
+# 추가 디스크 항목("SIZE:MODE") 검증
+validate_extra_disk() {
+    local entry="$1"
+    local size="${entry%%:*}"
+    local mode="${entry##*:}"
+    local min_gb max_gb
+    min_gb=$(get_spec ".custom_options.extra_disks.min_gb" "10")
+    max_gb=$(get_spec ".custom_options.extra_disks.max_gb" "500")
+
+    if ! [[ "$size" =~ ^[0-9]+$ ]]; then
+        log_error "추가 디스크 크기는 숫자여야 합니다: $entry"
+        return 1
+    fi
+    if (( size < min_gb || size > max_gb )); then
+        log_error "추가 디스크 크기는 ${min_gb}~${max_gb}GB 범위여야 합니다: ${size}GB"
+        return 1
+    fi
+    if [[ "$mode" != "auto" && "$mode" != "raw" ]]; then
+        log_error "추가 디스크 모드는 auto 또는 raw여야 합니다: $entry"
+        return 1
+    fi
+    return 0
+}
+
+# 고급 옵션 전체 검증 (플래그/API 모드 공용, 권위 검증)
+validate_extra_options() {
+    local max_disks max_nics
+    max_disks=$(get_spec ".custom_options.extra_disks.max_count" "3")
+    max_nics=$(get_spec ".custom_options.extra_networks.max_count" "1")
+
+    if (( ${#EXTRA_DISKS[@]} > max_disks )); then
+        log_error "추가 디스크는 최대 ${max_disks}개까지 가능합니다"
+        return 1
+    fi
+    local d
+    for d in "${EXTRA_DISKS[@]}"; do
+        validate_extra_disk "$d" || return 1
+    done
+
+    if (( ${#EXTRA_NICS[@]} > max_nics )); then
+        log_error "추가 네트워크는 최대 ${max_nics}개까지 가능합니다"
+        return 1
+    fi
+    local n pg
+    for n in "${EXTRA_NICS[@]}"; do
+        pg=$(get_network_port_group "$n")
+        if [[ -z "$pg" ]]; then
+            log_error "허용되지 않은 네트워크입니다: $n"
+            log_info "사용 가능한 네트워크: $(get_network_catalog | tr '\n' ' ')"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # 사용자 SSH 공개키 가져오기
 get_user_ssh_key() {
     local user="$1"
@@ -201,6 +295,28 @@ generate_terraform_file() {
     memory_mb=$(get_spec ".vm_specs.$spec.memory_mb" "4096")
     disk_gb=$(get_spec ".vm_specs.$spec.disk_gb" "50")
 
+    # 고급 옵션: 추가 디스크/네트워크 → HCL 리스트 문자열
+    local extra_disks_hcl="[]"
+    if (( ${#EXTRA_DISKS[@]} > 0 )); then
+        local entries="" d size mode
+        for d in "${EXTRA_DISKS[@]}"; do
+            size="${d%%:*}"
+            mode="${d##*:}"
+            entries+="{ size = $size, mode = \"$mode\" }, "
+        done
+        extra_disks_hcl="[${entries%, }]"
+    fi
+
+    local extra_networks_hcl="[]"
+    if (( ${#EXTRA_NICS[@]} > 0 )); then
+        local pgs="" n pg
+        for n in "${EXTRA_NICS[@]}"; do
+            pg=$(get_network_port_group "$n")
+            pgs+="\"$pg\", "
+        done
+        extra_networks_hcl="[${pgs%, }]"
+    fi
+
     # SSH 키
     local ssh_public_key
     ssh_public_key=$(get_user_ssh_key "$user")
@@ -238,6 +354,8 @@ generate_terraform_file() {
         -e "s|\${NETWORK_PREFIX}|$network_prefix|g" \
         -e "s|\${MTU}|$mtu|g" \
         -e "s|\${SSH_PUBLIC_KEY}|$ssh_public_key|g" \
+        -e "s|\${EXTRA_DISKS}|$extra_disks_hcl|g" \
+        -e "s|\${EXTRA_NETWORKS}|$extra_networks_hcl|g" \
         "$template_file" > "$output_dir/main.tf"
 }
 
@@ -280,6 +398,16 @@ create_single_vm_api_mode() {
     local login_user
     login_user=$(get_os_default_user "$os_type")
 
+    # 고급 옵션 메타데이터 (JSON 배열)
+    local extra_disks_json="[]" extra_networks_json="[]"
+    if (( ${#EXTRA_DISKS[@]} > 0 )); then
+        extra_disks_json=$(printf '%s\n' "${EXTRA_DISKS[@]}" | \
+            jq -R 'split(":") | {size_gb: (.[0] | tonumber), mode: .[1]}' | jq -s -c '.')
+    fi
+    if (( ${#EXTRA_NICS[@]} > 0 )); then
+        extra_networks_json=$(printf '%s\n' "${EXTRA_NICS[@]}" | jq -R '.' | jq -s -c '.')
+    fi
+
     # 메타데이터 생성
     local created_at
     created_at=$(get_timestamp)
@@ -292,6 +420,8 @@ create_single_vm_api_mode() {
     "login_user": "$login_user",
     "spec": "$spec",
     "ip_address": "$ip_address",
+    "extra_disks": $extra_disks_json,
+    "extra_networks": $extra_networks_json,
     "created_at": "$created_at",
     "status": "creating"
 }
@@ -338,7 +468,7 @@ EOF
         mv "$tf_dir/metadata.json.tmp" "$tf_dir/metadata.json"
 
     # 감사 로그
-    audit_log "CREATE_VM" "$vm_name" "user=$user,os=$os_type,spec=$spec,ip=$ip_address"
+    audit_log "CREATE_VM" "$vm_name" "user=$user,os=$os_type,spec=$spec,ip=$ip_address,extra_disks=${#EXTRA_DISKS[@]},extra_networks=${#EXTRA_NICS[@]}"
 
     # JSON 출력 (API 모드)
     cat "$tf_dir/metadata.json"
@@ -357,6 +487,16 @@ create_vm_via_api() {
         exit 1
     fi
 
+    # 고급 옵션 JSON 배열
+    local extra_disks_json="[]" extra_networks_json="[]"
+    if (( ${#EXTRA_DISKS[@]} > 0 )); then
+        extra_disks_json=$(printf '%s\n' "${EXTRA_DISKS[@]}" | \
+            jq -R 'split(":") | {size_gb: (.[0] | tonumber), mode: .[1]}' | jq -s -c '.')
+    fi
+    if (( ${#EXTRA_NICS[@]} > 0 )); then
+        extra_networks_json=$(printf '%s\n' "${EXTRA_NICS[@]}" | jq -R '.' | jq -s -c '.')
+    fi
+
     # JSON 데이터 생성
     local json_data
     json_data=$(jq -n \
@@ -364,7 +504,10 @@ create_vm_via_api() {
         --arg os "$os_type" \
         --arg spec "$spec" \
         --argjson count "$count" \
-        '{name: $name, os: $os, spec: $spec, count: $count}')
+        --argjson extra_disks "$extra_disks_json" \
+        --argjson extra_networks "$extra_networks_json" \
+        '{name: $name, os: $os, spec: $spec, count: $count,
+          extra_disks: $extra_disks, extra_networks: $extra_networks}')
 
     log_info "VM 생성 요청 중..."
 
@@ -414,6 +557,8 @@ main() {
     local count=1
     local api_mode=false
     local target_user=""
+    local extra_disk_args=()
+    local extra_nic_args=()
 
     # 인자 파싱
     while [[ $# -gt 0 ]]; do
@@ -434,6 +579,14 @@ main() {
                 count="$2"
                 shift 2
                 ;;
+            --disk)
+                extra_disk_args+=("$2")
+                shift 2
+                ;;
+            --nic)
+                extra_nic_args+=("$2")
+                shift 2
+                ;;
             --api)
                 api_mode=true
                 shift
@@ -452,12 +605,25 @@ main() {
         esac
     done
 
+    # 고급 옵션 플래그 정규화 (SIZE → SIZE:auto)
+    local d
+    for d in "${extra_disk_args[@]}"; do
+        [[ "$d" == *:* ]] || d="${d}:auto"
+        EXTRA_DISKS+=("$d")
+    done
+    EXTRA_NICS=("${extra_nic_args[@]}")
+
     # API 모드: Terraform 직접 실행 (API 서버에서 호출)
     if [[ "$api_mode" == "true" ]]; then
         local user="${target_user:-$CURRENT_USER}"
 
         if [[ -z "$vm_name" || -z "$os_type" || -z "$spec" ]]; then
             echo "{\"error\": \"Missing required parameters: name, os, spec\"}" >&2
+            exit 1
+        fi
+
+        if ! validate_extra_options; then
+            echo "{\"error\": \"Invalid extra options\"}" >&2
             exit 1
         fi
 
@@ -557,6 +723,63 @@ main() {
         count=$(prompt_number "생성할 VM 대수" 1 1 10)
     fi
 
+    # 5. 고급 옵션 (플래그로 지정하지 않은 경우 대화형)
+    if (( ${#EXTRA_DISKS[@]} == 0 && ${#EXTRA_NICS[@]} == 0 )); then
+        echo ""
+        if prompt_confirm "고급 옵션을 설정하시겠습니까? (디스크/네트워크 추가)" "n"; then
+            # 추가 디스크
+            local max_disks min_gb max_gb
+            max_disks=$(get_spec ".custom_options.extra_disks.max_count" "3")
+            min_gb=$(get_spec ".custom_options.extra_disks.min_gb" "10")
+            max_gb=$(get_spec ".custom_options.extra_disks.max_gb" "500")
+
+            echo ""
+            echo "[추가 디스크] (최대 ${max_disks}개, 개당 ${min_gb}~${max_gb}GB)"
+            local disk_count
+            disk_count=$(prompt_number "추가 디스크 개수" 0 0 "$max_disks")
+
+            local i size mode_sel
+            for ((i = 1; i <= disk_count; i++)); do
+                size=$(prompt_number "디스크 $i 크기 (GB)" "$min_gb" "$min_gb" "$max_gb")
+                mode_sel=$(prompt_select "디스크 $i 처리 방식" \
+                    "자동 포맷 + /data$i 마운트 (ext4)" \
+                    "Raw (직접 포맷)")
+                if [[ "$mode_sel" == "0" ]]; then
+                    EXTRA_DISKS+=("${size}:auto")
+                else
+                    EXTRA_DISKS+=("${size}:raw")
+                fi
+            done
+
+            # 추가 네트워크 (카탈로그가 비어있으면 섹션 생략)
+            local catalog=()
+            local cat_entry
+            while IFS= read -r cat_entry; do
+                [[ -n "$cat_entry" ]] && catalog+=("$cat_entry")
+            done < <(get_network_catalog)
+
+            if (( ${#catalog[@]} > 0 )); then
+                echo ""
+                echo "[추가 네트워크] (IP는 게스트에서 직접 설정)"
+                local nic_options=("없음")
+                local n
+                for n in "${catalog[@]}"; do
+                    nic_options+=("$n - $(get_network_catalog_description "$n")")
+                done
+                local nic_sel
+                nic_sel=$(prompt_select "추가 네트워크 연결" "${nic_options[@]}")
+                if [[ "$nic_sel" != "0" ]]; then
+                    EXTRA_NICS+=("${catalog[$((nic_sel - 1))]}")
+                fi
+            fi
+        fi
+    fi
+
+    # 고급 옵션 검증 (한도/카탈로그 - 플래그 입력 포함)
+    if ! validate_extra_options; then
+        exit 1
+    fi
+
     # 확인
     echo ""
     echo "생성할 VM 정보:"
@@ -564,6 +787,22 @@ main() {
     echo "  - OS: $os_type ($(get_os_description "$os_type"))"
     echo "  - 스펙: $spec ($(get_spec_details "$spec"))"
     echo "  - 대수: $count"
+    if (( ${#EXTRA_DISKS[@]} > 0 )); then
+        local disk_idx=1 disk_entry disk_size disk_mode
+        for disk_entry in "${EXTRA_DISKS[@]}"; do
+            disk_size="${disk_entry%%:*}"
+            disk_mode="${disk_entry##*:}"
+            if [[ "$disk_mode" == "auto" ]]; then
+                echo "  + 추가 디스크 $disk_idx: ${disk_size}GB (자동 마운트 /data$disk_idx)"
+            else
+                echo "  + 추가 디스크 $disk_idx: ${disk_size}GB (raw)"
+            fi
+            disk_idx=$((disk_idx + 1))
+        done
+    fi
+    if (( ${#EXTRA_NICS[@]} > 0 )); then
+        echo "  + 추가 네트워크: ${EXTRA_NICS[*]} (IP 미설정)"
+    fi
     echo ""
 
     if ! prompt_confirm "VM을 생성하시겠습니까?" "y"; then

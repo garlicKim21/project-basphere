@@ -12,25 +12,35 @@ const (
 	VMStatusFailed   VMStatus = "failed"
 )
 
+// ExtraDisk represents an additional disk attached to a VM (advanced option)
+type ExtraDisk struct {
+	SizeGB int    `json:"size_gb"`
+	Mode   string `json:"mode,omitempty"` // "auto" (format+mount, default) or "raw"
+}
+
 // VM represents a virtual machine
 type VM struct {
-	Name          string    `json:"name"`
-	VsphereVMName string    `json:"vsphere_vm_name"`
-	Owner         string    `json:"owner"`
-	OS            string    `json:"os"`
-	LoginUser     string    `json:"login_user"`
-	Spec          string    `json:"spec"`
-	IPAddress     string    `json:"ip_address"`
-	Status        VMStatus  `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
+	Name          string      `json:"name"`
+	VsphereVMName string      `json:"vsphere_vm_name"`
+	Owner         string      `json:"owner"`
+	OS            string      `json:"os"`
+	LoginUser     string      `json:"login_user"`
+	Spec          string      `json:"spec"`
+	IPAddress     string      `json:"ip_address"`
+	ExtraDisks    []ExtraDisk `json:"extra_disks,omitempty"`
+	ExtraNetworks []string    `json:"extra_networks,omitempty"`
+	Status        VMStatus    `json:"status"`
+	CreatedAt     time.Time   `json:"created_at"`
 }
 
 // CreateVMInput represents the input for creating a VM
 type CreateVMInput struct {
-	Name  string `json:"name"`
-	OS    string `json:"os"`
-	Spec  string `json:"spec"`
-	Count int    `json:"count,omitempty"`
+	Name          string      `json:"name"`
+	OS            string      `json:"os"`
+	Spec          string      `json:"spec"`
+	Count         int         `json:"count,omitempty"`
+	ExtraDisks    []ExtraDisk `json:"extra_disks,omitempty"`
+	ExtraNetworks []string    `json:"extra_networks,omitempty"`
 }
 
 // Validate validates the VM creation input
@@ -55,7 +65,45 @@ func (v *CreateVMInput) Validate() []string {
 		errors = append(errors, "count must be between 1 and 10")
 	}
 
+	// 구조적 상한 검증 - 관리자 설정 한도(specs.yaml custom_options)는 create-vm이 검증
+	if len(v.ExtraDisks) > 8 {
+		errors = append(errors, "extra_disks: at most 8 disks allowed")
+	}
+	for _, d := range v.ExtraDisks {
+		if d.SizeGB < 1 || d.SizeGB > 2000 {
+			errors = append(errors, "extra_disks: size_gb must be between 1 and 2000")
+		}
+		if d.Mode != "" && d.Mode != "auto" && d.Mode != "raw" {
+			errors = append(errors, "extra_disks: mode must be \"auto\" or \"raw\"")
+		}
+	}
+	if len(v.ExtraNetworks) > 4 {
+		errors = append(errors, "extra_networks: at most 4 networks allowed")
+	}
+	for _, n := range v.ExtraNetworks {
+		if !isValidNetworkName(n) {
+			errors = append(errors, "extra_networks: invalid network name: "+n)
+		}
+	}
+
 	return errors
+}
+
+// isValidNetworkName checks if a network catalog name is safe to pass through
+func isValidNetworkName(name string) bool {
+	if len(name) < 1 || len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			continue
+		}
+		if c == '-' || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isValidVMName checks if VM name is valid
@@ -85,23 +133,23 @@ type DeleteVMInput struct {
 
 // VMListResponse represents the response for listing VMs
 type VMListResponse struct {
-	VMs   []VM `json:"vms"`
-	Total int  `json:"total"`
+	VMs   []VM  `json:"vms"`
+	Total int   `json:"total"`
 	Quota Quota `json:"quota"`
 }
 
 // Quota represents user's resource quota
 type Quota struct {
-	MaxVMs     int `json:"max_vms"`
-	UsedVMs    int `json:"used_vms"`
-	MaxIPs     int `json:"max_ips"`
-	UsedIPs    int `json:"used_ips"`
+	MaxVMs  int `json:"max_vms"`
+	UsedVMs int `json:"used_vms"`
+	MaxIPs  int `json:"max_ips"`
+	UsedIPs int `json:"used_ips"`
 }
 
 // CreateVMResponse represents the response for creating VMs
 type CreateVMResponse struct {
-	VMs     []VM   `json:"vms"`
-	Created int    `json:"created"`
-	Failed  int    `json:"failed"`
+	VMs     []VM     `json:"vms"`
+	Created int      `json:"created"`
+	Failed  int      `json:"failed"`
 	Errors  []string `json:"errors,omitempty"`
 }

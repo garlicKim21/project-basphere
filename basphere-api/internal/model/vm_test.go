@@ -181,6 +181,69 @@ func TestCreateVMInput_Validate(t *testing.T) {
 			},
 			[]string{"name must be", "os is required", "spec is required", "count must be"},
 		},
+		{
+			"valid extra disks and networks",
+			CreateVMInput{
+				Name:  "webserver",
+				OS:    "ubuntu-24.04",
+				Spec:  "small",
+				Count: 1,
+				ExtraDisks: []ExtraDisk{
+					{SizeGB: 200, Mode: "auto"},
+					{SizeGB: 50, Mode: "raw"},
+					{SizeGB: 100}, // mode 생략 시 auto로 처리
+				},
+				ExtraNetworks: []string{"98-air-gapped"},
+			},
+			nil,
+		},
+		{
+			"invalid extra disk size",
+			CreateVMInput{
+				Name:       "webserver",
+				OS:         "ubuntu-24.04",
+				Spec:       "small",
+				Count:      1,
+				ExtraDisks: []ExtraDisk{{SizeGB: 0}},
+			},
+			[]string{"size_gb must be between"},
+		},
+		{
+			"invalid extra disk mode",
+			CreateVMInput{
+				Name:       "webserver",
+				OS:         "ubuntu-24.04",
+				Spec:       "small",
+				Count:      1,
+				ExtraDisks: []ExtraDisk{{SizeGB: 100, Mode: "lvm"}},
+			},
+			[]string{"mode must be"},
+		},
+		{
+			"too many extra disks",
+			CreateVMInput{
+				Name:  "webserver",
+				OS:    "ubuntu-24.04",
+				Spec:  "small",
+				Count: 1,
+				ExtraDisks: []ExtraDisk{
+					{SizeGB: 10}, {SizeGB: 10}, {SizeGB: 10}, {SizeGB: 10},
+					{SizeGB: 10}, {SizeGB: 10}, {SizeGB: 10}, {SizeGB: 10}, {SizeGB: 10},
+				},
+			},
+			[]string{"at most 8 disks"},
+		},
+		{
+			"invalid extra network name",
+			CreateVMInput{
+				Name:          "webserver",
+				OS:            "ubuntu-24.04",
+				Spec:          "small",
+				Count:         1,
+				ExtraNetworks: []string{"bad name; rm -rf"},
+			},
+			[]string{"invalid network name"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -213,6 +276,33 @@ func TestCreateVMInput_Validate(t *testing.T) {
 					t.Errorf("Validate() missing expected error containing %q, got %v",
 						wantErr, errors)
 				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Network Name Validation Tests
+// =============================================================================
+
+func TestIsValidNetworkName(t *testing.T) {
+	tests := []struct {
+		name    string
+		netName string
+		want    bool
+	}{
+		{"valid with digits and hyphen", "98-air-gapped", true},
+		{"valid with dot and underscore", "net_1.prod", true},
+		{"empty", "", false},
+		{"with space", "98 air", false},
+		{"with semicolon", "net;rm", false},
+		{"too long", strings.Repeat("a", 65), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isValidNetworkName(tt.netName); got != tt.want {
+				t.Errorf("isValidNetworkName(%q) = %v, want %v", tt.netName, got, tt.want)
 			}
 		})
 	}

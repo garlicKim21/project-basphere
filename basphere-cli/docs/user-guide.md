@@ -123,6 +123,8 @@ create-vm -n web-server -s medium -c 3
 - `-s, --spec <spec>`: 스펙 (tiny, small, medium, large, huge)
 - `-o, --os <os>`: OS 선택 (ubuntu-24.04, rocky-10.1) - 기본값: ubuntu-24.04
 - `-c, --count <count>`: 생성할 VM 수 (기본값: 1)
+- `--disk <GB[:auto|raw]>`: 추가 디스크 (반복 가능)
+- `--nic <network>`: 추가 네트워크 연결 (반복 가능)
 
 > **VM 이름 규칙**
 > - 영문 소문자로 시작
@@ -145,6 +147,33 @@ create-vm -n web -s small -c 3
 - CLI: `web-1`, `web-2`, `web-3`
 - vSphere: `<user-id>-web-1`, `<user-id>-web-2`, `<user-id>-web-3`
 - IP: 10.254.0.32, 10.254.0.33, 10.254.0.34
+
+### 고급 옵션 (추가 디스크/네트워크)
+
+기본 스펙에 디스크와 네트워크를 추가할 수 있습니다. 대화형 모드에서는
+"고급 옵션을 설정하시겠습니까?" 단계에서, 명령행 모드에서는 플래그로 지정합니다.
+
+```bash
+# 추가 디스크 200GB (자동 포맷 후 /data1 마운트)
+create-vm -n db -s large --disk 200
+
+# 디스크 2개 - 각각 스펙 지정 (200GB 자동 마운트 + 50GB raw)
+create-vm -n db -s large --disk 200 --disk 50:raw
+
+# 추가 네트워크 연결 (관리자 허용 목록 내에서만)
+create-vm -n gw -s small --nic 98-air-gapped
+```
+
+**추가 디스크**
+- 디스크별 크기와 처리 방식을 각각 지정 (개수/크기 한도는 관리자 설정)
+- `auto` (기본): ext4로 포맷 후 `/data1`, `/data2`... 순서로 자동 마운트
+- `raw`: 빈 디스크로 연결만 (`/dev/sdb`, `/dev/sdc`...) - LVM 등 직접 구성용
+- 디스크는 VM과 수명을 같이하며 `delete-vm` 시 함께 삭제됩니다
+
+**추가 네트워크**
+- 관리자가 허용한 네트워크 카탈로그에서만 선택 가능
+- IP는 자동 설정되지 않습니다 - 게스트 안에서 두 번째 인터페이스를 직접 설정하세요
+- 기본 네트워크(ens192 등)는 기존과 동일하게 자동 설정됩니다
 
 ---
 

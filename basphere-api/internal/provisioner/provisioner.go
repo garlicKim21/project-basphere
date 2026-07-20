@@ -182,13 +182,24 @@ func (p *BashProvisioner) GetUserEmail(username string) (string, error) {
 // CreateVM creates a new VM for the user
 func (p *BashProvisioner) CreateVM(username string, input *model.CreateVMInput) (*model.VM, error) {
 	// Run create-vm script with --api flag (non-interactive, JSON output)
-	cmd := exec.Command(p.createVMScript,
+	args := []string{
 		"--api",
 		"--name", input.Name,
 		"--os", input.OS,
 		"--spec", input.Spec,
 		"--user", username,
-	)
+	}
+	for _, d := range input.ExtraDisks {
+		mode := d.Mode
+		if mode == "" {
+			mode = "auto"
+		}
+		args = append(args, "--disk", fmt.Sprintf("%d:%s", d.SizeGB, mode))
+	}
+	for _, n := range input.ExtraNetworks {
+		args = append(args, "--nic", n)
+	}
+	cmd := exec.Command(p.createVMScript, args...)
 
 	// Set environment to ensure proper execution
 	cmd.Env = append(os.Environ(), "BASPHERE_API_MODE=1")

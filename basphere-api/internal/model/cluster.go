@@ -17,11 +17,11 @@ const (
 type Cluster struct {
 	Name              string        `json:"name"`
 	Owner             string        `json:"owner"`
-	Type              string        `json:"type"`                          // dev, standard
+	Type              string        `json:"type"` // dev, standard
 	K8sVersion        string        `json:"k8s_version"`
 	ControlPlaneCount int           `json:"control_plane_count"`
 	WorkerCount       int           `json:"worker_count"`
-	WorkerSpec        string        `json:"worker_spec"`                   // small, medium, large
+	WorkerSpec        string        `json:"worker_spec"` // small, medium, large
 	ControlPlaneIP    string        `json:"control_plane_ip"`
 	WorkerIPs         []string      `json:"worker_ips"`
 	Status            ClusterStatus `json:"status"`
