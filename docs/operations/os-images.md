@@ -83,6 +83,16 @@ RHEL 저장소는 등록이 필요한데 libguestfs appliance는 네트워크가
 인터페이스 이름은 NIC의 PCI 슬롯 번호로 결정된다(`ens<슬롯>`). 새 이미지 추가 시
 테스트 VM으로 실측 검증할 것 — 틀리면 apply가 게스트 IP 대기 타임아웃으로 실패한다.
 
+## OVF 배포의 하드웨어 커스터마이징 제약
+
+vCenter의 OVF 라이브러리 아이템 배포는 **NIC 하드웨어 커스터마이징을 지원하지 않는다**
+(플랫폼 제약, [terraform-provider-vsphere#1441](https://github.com/vmware/terraform-provider-vsphere/issues/1441)).
+NIC을 2개 이상 지정하면 `network_mappings ... Element already present in the map` 오류로 배포가 실패한다.
+
+이 때문에 추가 네트워크(고급 옵션)는 vm.tf.tmpl의 `terraform_data.extra_nic` 리소스가
+**VM 생성 완료 후 govc `vm.network.add`로 hot-add**한다. CPU/메모리/디스크 크기/추가 디스크는
+배포 후 재구성 경로라 OVF 배포와 문제없이 동작한다.
+
 ## 이미지 스테이징
 
 원본 qcow2와 커스터마이즈본은 `/var/lib/basphere/images/`에 보관.
