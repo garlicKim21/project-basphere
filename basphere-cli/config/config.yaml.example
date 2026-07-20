@@ -32,7 +32,7 @@ templates:
       library_item: "rocky-10.2-20260525"
       default_user: "rocky"
       description: "Rocky Linux 10.2"
-      interface: "ens192"
+      interface: "ens33"
       guest_id: "rockylinux_64Guest"
       firmware: "efi"
     # 다른 OS 추가 예시:
@@ -40,7 +40,7 @@ templates:
     #   library_item: "rhel-10.2-20260720"
     #   default_user: "cloud-user"
     #   description: "Red Hat Enterprise Linux 10.2"
-    #   interface: "ens192"
+    #   interface: "ens33"
     #   guest_id: "rhel9_64Guest"
     #   firmware: "efi"
 
