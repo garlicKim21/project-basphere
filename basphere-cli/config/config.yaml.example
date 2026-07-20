@@ -20,6 +20,7 @@ vsphere:
 # - interface: 게스트가 인식하는 NIC 이름 (vmxnet3 기준 보통 ens192)
 templates:
   library: "os-content-library"
+  hardware_version: 21                    # 가상 하드웨어 버전 (21 = ESXi 8.0). 클라우드 OVA의 낮은 버전을 상향
   os:
     ubuntu-24.04:
       library_item: "ubuntu-24.04-20260705-server-cloudimg-amd64"

@@ -305,13 +305,15 @@ generate_terraform_file() {
     vm_folder=$(get_config '.vsphere.folder' 'basphere-vms')
 
     # OS별 설정 (컨텐츠 라이브러리 기반)
-    local content_library library_item guest_id firmware interface
+    local content_library library_item guest_id firmware interface hardware_version
     content_library=$(get_config '.templates.library' 'os-content-library')
     library_item=$(get_os_library_item "$os_type")
     guest_id=$(get_os_guest_id "$os_type")
     firmware=$(get_os_firmware "$os_type")
     default_user=$(get_os_default_user "$os_type")
     interface=$(get_os_interface "$os_type")
+    # 가상 하드웨어 버전 (전역 설정, 기본 21 = ESXi 8.0)
+    hardware_version=$(get_config '.templates.hardware_version' '21')
 
     # 네트워크 설정
     local gateway netmask dns_servers network_prefix mtu
@@ -379,6 +381,7 @@ generate_terraform_file() {
         -e "s|\${LIBRARY_ITEM}|$library_item|g" \
         -e "s|\${GUEST_ID}|$guest_id|g" \
         -e "s|\${FIRMWARE}|$firmware|g" \
+        -e "s|\${HARDWARE_VERSION}|$hardware_version|g" \
         -e "s|\${DEFAULT_USER}|$default_user|g" \
         -e "s|\${INTERFACE}|$interface|g" \
         -e "s|\${NUM_CPUS}|$num_cpus|g" \

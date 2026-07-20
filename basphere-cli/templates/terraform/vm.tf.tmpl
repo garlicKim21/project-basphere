@@ -94,6 +94,12 @@ variable "firmware" {
   default     = "${FIRMWARE}"
 }
 
+variable "hardware_version" {
+  description = "Virtual hardware version (upgrades cloned VM to this level)"
+  type        = number
+  default     = ${HARDWARE_VERSION}
+}
+
 variable "base_folder" {
   description = "Base VM folder path"
   type        = string
@@ -352,6 +358,9 @@ resource "vsphere_virtual_machine" "vm" {
   # 라이브러리 OVF 아이템에서는 하드웨어 정보를 읽을 수 없어 config에서 명시
   guest_id = var.guest_id
   firmware = var.firmware
+
+  # 클라우드 이미지 OVA는 낮은 hw 버전(예: vmx-10)으로 제작됨 → 배포 시 상향
+  hardware_version = var.hardware_version
 
   scsi_type = "pvscsi"
 
