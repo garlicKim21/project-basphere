@@ -73,13 +73,37 @@ get_os_description() {
     fi
 }
 
-# OS 템플릿 이름 가져오기
-get_os_template() {
+# OS 라이브러리 아이템 이름 가져오기 (컨텐츠 라이브러리 기반)
+get_os_library_item() {
     local os="$1"
     local value
-    value=$(yq eval ".templates.os[\"$os\"].template" "$BASPHERE_CONFIG" 2>/dev/null)
+    value=$(yq eval ".templates.os[\"$os\"].library_item" "$BASPHERE_CONFIG" 2>/dev/null)
     if [[ -z "$value" || "$value" == "null" ]]; then
         echo ""
+    else
+        echo "$value"
+    fi
+}
+
+# OS 게스트 ID 가져오기
+get_os_guest_id() {
+    local os="$1"
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].guest_id" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "otherLinux64Guest"
+    else
+        echo "$value"
+    fi
+}
+
+# OS 펌웨어 가져오기
+get_os_firmware() {
+    local os="$1"
+    local value
+    value=$(yq eval ".templates.os[\"$os\"].firmware" "$BASPHERE_CONFIG" 2>/dev/null)
+    if [[ -z "$value" || "$value" == "null" ]]; then
+        echo "bios"
     else
         echo "$value"
     fi
@@ -112,9 +136,9 @@ get_os_interface() {
 # OS 유효성 검사
 validate_os() {
     local os="$1"
-    local template
-    template=$(get_os_template "$os")
-    [[ -n "$template" ]]
+    local library_item
+    library_item=$(get_os_library_item "$os")
+    [[ -n "$library_item" ]]
 }
 
 # VM 스펙 목록 가져오기
@@ -264,7 +288,7 @@ generate_terraform_file() {
     fi
 
     # 설정 값 로드
-    local vsphere_server datacenter cluster datastore network resource_pool vm_folder template default_user
+    local vsphere_server datacenter cluster datastore network resource_pool vm_folder default_user
     vsphere_server=$(get_config '.vsphere.server' 'vcenter.example.local')
     datacenter=$(get_config '.vsphere.datacenter' 'DC1')
     cluster=$(get_config '.vsphere.cluster' 'Cluster1')
@@ -273,10 +297,13 @@ generate_terraform_file() {
     resource_pool=$(get_config '.vsphere.resource_pool' '/DC1/host/Cluster1/Resources')
     vm_folder=$(get_config '.vsphere.folder' 'basphere-vms')
 
-    # OS별 설정
-    template=$(get_os_template "$os_type")
+    # OS별 설정 (컨텐츠 라이브러리 기반)
+    local content_library library_item guest_id firmware interface
+    content_library=$(get_config '.templates.library' 'os-content-library')
+    library_item=$(get_os_library_item "$os_type")
+    guest_id=$(get_os_guest_id "$os_type")
+    firmware=$(get_os_firmware "$os_type")
     default_user=$(get_os_default_user "$os_type")
-    local interface
     interface=$(get_os_interface "$os_type")
 
     # 네트워크 설정
@@ -341,7 +368,10 @@ generate_terraform_file() {
         -e "s|\${NETWORK}|$network|g" \
         -e "s|\${RESOURCE_POOL}|$resource_pool|g" \
         -e "s|\${VM_FOLDER}|$vm_folder|g" \
-        -e "s|\${TEMPLATE}|$template|g" \
+        -e "s|\${CONTENT_LIBRARY}|$content_library|g" \
+        -e "s|\${LIBRARY_ITEM}|$library_item|g" \
+        -e "s|\${GUEST_ID}|$guest_id|g" \
+        -e "s|\${FIRMWARE}|$firmware|g" \
         -e "s|\${DEFAULT_USER}|$default_user|g" \
         -e "s|\${INTERFACE}|$interface|g" \
         -e "s|\${NUM_CPUS}|$num_cpus|g" \

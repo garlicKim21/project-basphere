@@ -62,7 +62,7 @@ project-basphere/
 
 - 사용자 관리 (등록/승인/삭제)
 - VM 생성/조회/삭제
-- 다중 OS (Ubuntu 24.04, Rocky 10.1)
+- 다중 OS (Ubuntu 24.04/26.04, Rocky 10.2, RHEL 10.2) - 컨텐츠 라이브러리 기반
 - IP 자동 할당 (IPAM)
 - API 기반 아키텍처
 - 보안 (SSH 키 인증, fail2ban)

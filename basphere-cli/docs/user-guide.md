@@ -112,7 +112,7 @@ create-vm
 create-vm -n my-server -s small
 
 # OS 지정하여 생성
-create-vm -n rocky-server -s small -o rocky-10.1
+create-vm -n rocky-server -s small -o rocky-10.2
 
 # 여러 VM 생성
 create-vm -n web-server -s medium -c 3
@@ -121,7 +121,7 @@ create-vm -n web-server -s medium -c 3
 옵션:
 - `-n, --name <name>`: VM 이름
 - `-s, --spec <spec>`: 스펙 (tiny, small, medium, large, huge)
-- `-o, --os <os>`: OS 선택 (ubuntu-24.04, rocky-10.1) - 기본값: ubuntu-24.04
+- `-o, --os <os>`: OS 선택 (ubuntu-24.04, ubuntu-26.04, rocky-10.2, rhel-10.2)
 - `-c, --count <count>`: 생성할 VM 수 (기본값: 1)
 - `--disk <GB[:auto|raw]>`: 추가 디스크 (반복 가능)
 - `--nic <network>`: 추가 네트워크 연결 (반복 가능)

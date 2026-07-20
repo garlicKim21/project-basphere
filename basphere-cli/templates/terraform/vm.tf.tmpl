@@ -70,10 +70,28 @@ variable "resource_pool" {
   default     = "${RESOURCE_POOL}"
 }
 
-variable "template" {
-  description = "VM template name"
+variable "content_library" {
+  description = "Content library name (OS image source)"
   type        = string
-  default     = "${TEMPLATE}"
+  default     = "${CONTENT_LIBRARY}"
+}
+
+variable "library_item" {
+  description = "Content library item name (OS image)"
+  type        = string
+  default     = "${LIBRARY_ITEM}"
+}
+
+variable "guest_id" {
+  description = "vSphere guest OS identifier"
+  type        = string
+  default     = "${GUEST_ID}"
+}
+
+variable "firmware" {
+  description = "VM firmware (bios or efi)"
+  type        = string
+  default     = "${FIRMWARE}"
 }
 
 variable "base_folder" {
@@ -198,9 +216,14 @@ data "vsphere_network" "network" {
   datacenter_id = data.vsphere_datacenter.dc.id
 }
 
-data "vsphere_virtual_machine" "template" {
-  name          = var.template
-  datacenter_id = data.vsphere_datacenter.dc.id
+data "vsphere_content_library" "os" {
+  name = var.content_library
+}
+
+data "vsphere_content_library_item" "os_image" {
+  name       = var.library_item
+  library_id = data.vsphere_content_library.os.id
+  type       = "ovf"
 }
 
 data "vsphere_network" "extra" {
@@ -314,14 +337,15 @@ resource "vsphere_virtual_machine" "vm" {
   num_cpus = var.num_cpus
   memory   = var.memory
 
-  guest_id = data.vsphere_virtual_machine.template.guest_id
-  firmware = data.vsphere_virtual_machine.template.firmware
+  # 라이브러리 OVF 아이템에서는 하드웨어 정보를 읽을 수 없어 config에서 명시
+  guest_id = var.guest_id
+  firmware = var.firmware
 
-  scsi_type = data.vsphere_virtual_machine.template.scsi_type
+  scsi_type = "pvscsi"
 
   network_interface {
     network_id   = data.vsphere_network.network.id
-    adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+    adapter_type = "vmxnet3"
   }
 
   # 추가 네트워크 (고급 옵션, IP 미설정 - 링크만 연결)
@@ -329,7 +353,7 @@ resource "vsphere_virtual_machine" "vm" {
     for_each = var.extra_networks
     content {
       network_id   = data.vsphere_network.extra[network_interface.value].id
-      adapter_type = data.vsphere_virtual_machine.template.network_interface_types[0]
+      adapter_type = "vmxnet3"
     }
   }
 
@@ -358,8 +382,9 @@ resource "vsphere_virtual_machine" "vm" {
   }
 
   clone {
-    template_uuid = data.vsphere_virtual_machine.template.id
-    # vSphere customization 대신 cloud-init 사용 (Ubuntu Cloud Image 호환)
+    # 컨텐츠 라이브러리 OVF 아이템에서 직접 배포
+    template_uuid = data.vsphere_content_library_item.os_image.id
+    # vSphere customization 대신 cloud-init 사용 (Cloud Image 호환)
   }
 
   # cloud-init via VMware guestinfo

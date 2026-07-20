@@ -11,29 +11,38 @@ vsphere:
   network: "VM Network"                   # VM 네트워크 (포트그룹 이름)
   folder: "basphere-vms"                  # VM 폴더 (없으면 자동 생성)
 
-# VM 템플릿 설정
-# OS별 템플릿 설정 (cloud-init + open-vm-tools 포함 필수)
-# interface: OS에서 인식하는 네트워크 인터페이스 이름 (VMXNET3 기준)
-#   - Ubuntu: ens192
-#   - Rocky/RHEL: ens33 또는 ens192 (템플릿 설정에 따라 다름)
+# VM 이미지 설정 (컨텐츠 라이브러리 기반)
+# OS 이미지는 vCenter 컨텐츠 라이브러리의 OVF 아이템 (cloud-init 포함 필수)
+# - library: 라이브러리 이름
+# - library_item: 아이템 이름 (버전+빌드날짜 포함 권장, 예: ubuntu-24.04-20260705-...)
+# - guest_id: vSphere 게스트 OS 식별자 (govc vm.option.info로 확인)
+# - firmware: bios 또는 efi (이미지 부팅 방식에 맞출 것)
+# - interface: 게스트가 인식하는 NIC 이름 (vmxnet3 기준 보통 ens192)
 templates:
+  library: "os-content-library"
   os:
     ubuntu-24.04:
-      template: "ubuntu-noble-24.04-cloudimg"
+      library_item: "ubuntu-24.04-20260705-server-cloudimg-amd64"
       default_user: "ubuntu"
       description: "Ubuntu 24.04 LTS (Noble)"
       interface: "ens192"
-    rocky-10.1:
-      template: "rocky-10-template"
+      guest_id: "ubuntu64Guest"
+      firmware: "bios"
+    rocky-10.2:
+      library_item: "rocky-10.2-20260525"
       default_user: "rocky"
-      description: "Rocky Linux 10.1"
-      interface: "ens33"
+      description: "Rocky Linux 10.2"
+      interface: "ens192"
+      guest_id: "rockylinux_64Guest"
+      firmware: "efi"
     # 다른 OS 추가 예시:
-    # ubuntu-22.04:
-    #   template: "ubuntu-jammy-22.04-cloudimg"
-    #   default_user: "ubuntu"
-    #   description: "Ubuntu 22.04 LTS (Jammy)"
+    # rhel-10.2:
+    #   library_item: "rhel-10.2-20260720"
+    #   default_user: "cloud-user"
+    #   description: "Red Hat Enterprise Linux 10.2"
     #   interface: "ens192"
+    #   guest_id: "rhel9_64Guest"
+    #   firmware: "efi"
 
 # 네트워크 설정
 network:
