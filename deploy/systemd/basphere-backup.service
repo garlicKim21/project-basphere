@@ -1,0 +1,9 @@
+[Unit]
+Description=Basphere data backup
+Documentation=https://github.com/basphere/basphere-api
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/basphere-backup
+Nice=10
+IOSchedulingClass=idle

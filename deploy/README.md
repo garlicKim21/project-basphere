@@ -7,10 +7,14 @@
 ```
 deploy/
 ├── README.md           # 이 문서
+├── backup/
+│   └── basphere-backup.sh    # 데이터 백업 스크립트
 ├── nginx/
 │   └── basphere.conf   # nginx 리버스 프록시 설정
 └── systemd/
-    └── basphere-api.service  # API 서버 systemd 서비스
+    ├── basphere-api.service  # API 서버 systemd 서비스
+    ├── basphere-backup.service  # 백업 실행 서비스 (oneshot)
+    └── basphere-backup.timer    # 백업 스케줄 (매일 03:00)
 ```
 
 ## 아키텍처
@@ -114,6 +118,29 @@ sudo certbot --nginx -d your-domain.com
 # 자동 갱신 테스트
 sudo certbot renew --dry-run
 ```
+
+### 5. 백업 설정 (권장)
+
+사용자 메타데이터, Terraform 상태(tfstate), IPAM, 설정, SSH 키를 매일 백업합니다.
+
+```bash
+# 백업 스크립트 및 systemd 유닛 설치
+sudo cp /opt/basphere/deploy/backup/basphere-backup.sh /usr/local/sbin/basphere-backup
+sudo chmod 755 /usr/local/sbin/basphere-backup
+sudo cp /opt/basphere/deploy/systemd/basphere-backup.service /etc/systemd/system/
+sudo cp /opt/basphere/deploy/systemd/basphere-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now basphere-backup.timer
+
+# 수동 실행 및 확인
+sudo systemctl start basphere-backup.service
+sudo ls -lh /var/backups/basphere/
+```
+
+- 백업 위치: `/var/backups/basphere/` (root 전용, 600 권한)
+- 보존 기간: 14일 (스크립트의 `RETENTION_DAYS`로 조정)
+- `.terraform` 프로바이더 캐시는 기본 제외 (`--full` 옵션으로 포함 가능)
+- 백업에는 `vsphere.env`(인증 정보)가 포함되므로 외부 복사 시 주의
 
 ## 설정 파일 설명
 
