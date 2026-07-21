@@ -220,13 +220,21 @@ list-vms -j
 ## VM 삭제
 
 ```bash
-delete-vm <vm-name>
+delete-vm <vm-name> [<vm-name> ...]
 ```
 
 예시:
 ```bash
-delete-vm my-dev-server
+delete-vm my-dev-server            # 단일 삭제
+delete-vm web-1 web-2 web-3        # 여러 대 한 번에 삭제
+delete-vm web-1 web-2 -y           # 확인 없이 삭제
 ```
+
+옵션:
+- `-y, --yes` (또는 `-f, --force`): 확인 프롬프트 없이 삭제
+
+> 여러 대를 지정하면 삭제 목록을 한 번에 보여주고 확인을 한 번만 받습니다.
+> 일부가 실패해도 나머지는 계속 진행하며, 끝에 성공/실패 개수를 표시합니다.
 
 출력:
 ```

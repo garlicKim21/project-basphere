@@ -30,18 +30,19 @@ usage() {
     cat << EOF
 VM 삭제
 
-사용법: delete-vm <vm-name> [옵션]
+사용법: delete-vm <vm-name> [<vm-name> ...] [옵션]
 
 인자:
-  vm-name       삭제할 VM 이름
+  vm-name       삭제할 VM 이름 (여러 개를 공백으로 구분해 지정 가능)
 
 옵션:
-  -f, --force   확인 없이 삭제
+  -y, --yes     확인 없이 삭제 (-f, --force 동일)
   -h, --help    도움말
 
 예시:
   delete-vm my-server
-  delete-vm my-server -f
+  delete-vm vm1 vm2 vm3
+  delete-vm vm1 vm2 -y
 EOF
     exit 0
 }
@@ -153,17 +154,28 @@ delete_vm_via_api() {
     fi
 }
 
+# 단일 VM 정보 표시 (있으면)
+print_vm_info() {
+    local vm_name="$1"
+    local metadata_file="$BASPHERE_DATA_DIR/terraform/$CURRENT_USER/$vm_name/metadata.json"
+    if [[ -f "$metadata_file" ]]; then
+        echo "  - $vm_name: IP=$(jq -r '.ip_address // "-"' "$metadata_file"), OS=$(jq -r '.os // "-"' "$metadata_file"), 스펙=$(jq -r '.spec // "-"' "$metadata_file"), 상태=$(jq -r '.status // "-"' "$metadata_file")"
+    else
+        echo "  - $vm_name"
+    fi
+}
+
 # 메인 함수
 main() {
-    local vm_name=""
     local force=false
     local api_mode=false
     local target_user=""
+    local vm_names=()
 
-    # 인자 파싱
+    # 인자 파싱 (VM 이름 여러 개 허용)
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -f|--force)
+            -y|--yes|-f|--force)
                 force=true
                 shift
                 ;;
@@ -183,26 +195,24 @@ main() {
                 usage
                 ;;
             *)
-                if [[ -z "$vm_name" ]]; then
-                    vm_name="$1"
-                fi
+                vm_names+=("$1")
                 shift
                 ;;
         esac
     done
 
     # VM 이름 필수
-    if [[ -z "$vm_name" ]]; then
+    if [[ ${#vm_names[@]} -eq 0 ]]; then
         log_error "VM 이름이 필요합니다"
-        echo "사용법: delete-vm <vm-name>"
+        echo "사용법: delete-vm <vm-name> [<vm-name> ...]"
         exit 1
     fi
 
-    # API 모드: Terraform 직접 실행 (API 서버에서 호출)
+    # API 모드: Terraform 직접 실행 (API 서버에서 호출, 단일 VM)
     if [[ "$api_mode" == "true" ]]; then
         local user="${target_user:-$CURRENT_USER}"
 
-        if delete_single_vm_api_mode "$vm_name" "$user"; then
+        if delete_single_vm_api_mode "${vm_names[0]}" "$user"; then
             exit 0
         else
             exit 1
@@ -217,30 +227,33 @@ main() {
         exit 1
     fi
 
-    # VM 존재 확인 (로컬 체크)
-    if ! vm_name_exists "$CURRENT_USER" "$vm_name"; then
-        log_error "VM을 찾을 수 없습니다: $vm_name"
+    # 존재하는 VM만 대상으로 추림 (없는 이름은 경고)
+    local targets=()
+    local vm
+    for vm in "${vm_names[@]}"; do
+        if vm_name_exists "$CURRENT_USER" "$vm"; then
+            targets+=("$vm")
+        else
+            log_warn "VM을 찾을 수 없습니다 (건너뜀): $vm"
+        fi
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log_error "삭제할 VM이 없습니다"
         exit 1
     fi
 
-    # VM 정보 표시
-    local tf_dir="$BASPHERE_DATA_DIR/terraform/$CURRENT_USER/$vm_name"
-    local metadata_file="$tf_dir/metadata.json"
+    # 삭제 대상 정보 표시
+    echo ""
+    echo "삭제할 VM (${#targets[@]}개):"
+    for vm in "${targets[@]}"; do
+        print_vm_info "$vm"
+    done
+    echo ""
 
-    if [[ -f "$metadata_file" ]]; then
-        echo ""
-        echo "삭제할 VM 정보:"
-        echo "  - 이름: $vm_name"
-        echo "  - IP: $(jq -r '.ip_address // "-"' "$metadata_file")"
-        echo "  - OS: $(jq -r '.os // "-"' "$metadata_file")"
-        echo "  - 스펙: $(jq -r '.spec // "-"' "$metadata_file")"
-        echo "  - 상태: $(jq -r '.status // "-"' "$metadata_file")"
-        echo ""
-    fi
-
-    # 확인
+    # 확인 (한 번에)
     if [[ "$force" != "true" ]]; then
-        if ! prompt_confirm "정말로 VM '$vm_name'을(를) 삭제하시겠습니까?"; then
+        if ! prompt_confirm "위 ${#targets[@]}개 VM을 모두 삭제하시겠습니까?"; then
             log_info "취소되었습니다"
             exit 0
         fi
@@ -248,12 +261,23 @@ main() {
 
     echo ""
 
-    # API를 통해 VM 삭제
-    if delete_vm_via_api "$vm_name"; then
-        exit 0
-    else
-        exit 1
-    fi
+    # 순차 삭제 - 실패해도 나머지 계속 진행
+    local deleted=0 failed=0
+    for vm in "${targets[@]}"; do
+        if delete_vm_via_api "$vm"; then
+            deleted=$((deleted + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    done
+
+    echo ""
+    echo "=========================================="
+    echo "삭제 완료: $deleted / ${#targets[@]}"
+    [[ $failed -gt 0 ]] && echo "실패: $failed"
+    echo "=========================================="
+
+    [[ $failed -eq 0 ]] && exit 0 || exit 1
 }
 
 main "$@"
