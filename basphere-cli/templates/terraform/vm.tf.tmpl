@@ -281,14 +281,15 @@ locals {
   ]
 
   # 추가 NIC은 부팅 후 govc로 hot-add되므로 cloud-init 첫 부팅이 설정할 수 없음.
-  # → 부팅 시 udev 규칙을 심어두고, NIC이 붙는 순간(ADD 이벤트) MTU를 오버레이망 값(1450)으로 설정.
-  #   기본 NIC(var.interface)과 lo는 제외 (기본 NIC은 이미 cloud-init이 mtu 설정). OS-무관(udev).
-  nic_mtu_files = length(var.extra_networks) > 0 ? [
-    {
-      path        = "/etc/udev/rules.d/70-basphere-extra-nic-mtu.rules"
-      permissions = "0644"
-      content     = "ACTION==\"add\", SUBSYSTEM==\"net\", ENV{INTERFACE}!=\"lo\", ENV{INTERFACE}!=\"${var.interface}\", RUN+=\"/sbin/ip link set %k mtu ${var.mtu}\"\n"
-    }
+  # → 이른 부팅 단계(bootcmd)에서 systemd .link 파일을 심고 udev 규칙을 reload.
+  #   이후 NIC이 hot-add되면 systemd-udevd가 .link의 MTUBytes를 장치 레벨에 적용(NM/netplan이 respect).
+  #   vmxnet3 전체 매칭(기본 NIC도 동일 1450이라 무해). OS-무관(systemd-udevd는 NM/netplan과 독립).
+  # NamePolicy를 반드시 포함해야 함: .link는 첫 매칭 파일이 naming까지 전담하므로,
+  # 표준 정책을 명시하지 않으면 인터페이스가 커널 이름(eth0)으로 떨어져 기본 NIC 이름도 깨진다.
+  nic_mtu_bootcmd = length(var.extra_networks) > 0 ? [
+    "mkdir -p /etc/systemd/network",
+    "printf '[Match]\\nDriver=vmxnet3\\n\\n[Link]\\nNamePolicy=keep kernel database onboard slot path\\nAlternativeNamesPolicy=database onboard slot path\\nMACAddressPolicy=persistent\\nMTUBytes=${var.mtu}\\n' > /etc/systemd/network/70-basphere-nic-mtu.link",
+    "udevadm control --reload || true",
   ] : []
 
   # 고급 옵션: 사용자 계정 비번 (공란=키 전용)
@@ -330,8 +331,8 @@ locals {
     ]
     package_update  = false
     package_upgrade = false
-    # 추가 NIC MTU용 udev 규칙 (추가 NIC 없으면 빈 리스트 → cloud-init 무시)
-    write_files = local.nic_mtu_files
+    # 추가 NIC MTU: .link 파일 작성 + udev reload (hot-add 전에 로드되도록 이른 bootcmd에서)
+    bootcmd = local.nic_mtu_bootcmd
     growpart = {
       mode                     = "auto"
       devices                  = ["/"]
