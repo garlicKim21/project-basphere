@@ -280,6 +280,17 @@ locals {
     } if d.mode == "auto"
   ]
 
+  # 추가 NIC은 부팅 후 govc로 hot-add되므로 cloud-init 첫 부팅이 설정할 수 없음.
+  # → 부팅 시 udev 규칙을 심어두고, NIC이 붙는 순간(ADD 이벤트) MTU를 오버레이망 값(1450)으로 설정.
+  #   기본 NIC(var.interface)과 lo는 제외 (기본 NIC은 이미 cloud-init이 mtu 설정). OS-무관(udev).
+  nic_mtu_files = length(var.extra_networks) > 0 ? [
+    {
+      path        = "/etc/udev/rules.d/70-basphere-extra-nic-mtu.rules"
+      permissions = "0644"
+      content     = "ACTION==\"add\", SUBSYSTEM==\"net\", ENV{INTERFACE}!=\"lo\", ENV{INTERFACE}!=\"${var.interface}\", RUN+=\"/sbin/ip link set %k mtu ${var.mtu}\"\n"
+    }
+  ] : []
+
   # 고급 옵션: 사용자 계정 비번 (공란=키 전용)
   user_pw_set = var.user_password_hash != ""
 
@@ -319,6 +330,8 @@ locals {
     ]
     package_update  = false
     package_upgrade = false
+    # 추가 NIC MTU용 udev 규칙 (추가 NIC 없으면 빈 리스트 → cloud-init 무시)
+    write_files = local.nic_mtu_files
     growpart = {
       mode                     = "auto"
       devices                  = ["/"]
