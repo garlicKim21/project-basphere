@@ -5,9 +5,51 @@
 
 ## 아이템 명명 규칙
 
-`<os>-<버전>-<빌드날짜>` 형식. 같은 OS의 새 빌드는 새 아이템으로 나란히 추가하고,
+`<os>-<버전>-<빌드날짜>` 형식. 같은 이미지에 패키지를 추가한 리비전은 `-r2`, `-r3` 접미사를 붙인다
+(예: `rocky-10.2-20260525-r2`). 같은 OS의 새 빌드/리비전은 새 아이템으로 나란히 추가하고,
 `/etc/basphere/config.yaml`의 `library_item`만 새 이름으로 바꾸면 신규 VM부터 적용된다.
 기존 VM의 main.tf는 생성 시점 아이템을 참조하므로, 해당 VM이 모두 삭제되기 전까지 옛 아이템을 지우지 말 것.
+(config만 되돌리면 즉시 롤백 가능하므로, 검증 전까지 이전 아이템을 삭제하지 않는다.)
+
+## 이미지 패키지 리비전 파이프라인 (표준 — Rocky 등 무료 저장소)
+
+기존 라이브러리 아이템에 패키지를 얹어 새 리비전을 만드는 **표준 절차**.
+qcow2 재다운로드·오프라인 RPM 없이, 검증된 기존 아이템 위에 dnf로 얹는다.
+플랫폼 컨테이너 요구(Neubility E2E)에 필요한 커널 모듈/도구를 이 방식으로 보충한다.
+
+```bash
+# 1. 기존 아이템에서 빌드용 VM 배포 (임시 사용자로)
+sudo basphere-admin user add imgbuild --pubkey <key.pub> --email img@build.local --team BUILD
+create-vm -n <name> -o rocky-10.2 -s small     # 또는 API 호출
+
+# 2. SSH 접속 후 패키지 주입 - 커널 버전 고정, weak-deps 차단(커널 안 딸려오게)
+KVER=$(uname -r | sed 's/\.x86_64$//')
+sudo dnf install -y --setopt=install_weak_deps=False \
+  "kernel-modules-extra-${KVER}" iptables-nft ipset firewalld
+#   kernel-modules-extra: br_netfilter, iptable_*, xt_*, ip_set (컨테이너 네트워킹 필수)
+#   GenericCloud는 kernel-modules-core만 있어 이 모듈들이 빠져 있음
+sudo systemctl disable firewalld    # 설치만, 활성화는 플랫폼 설치기가 담당
+
+# 3. 템플릿화 전 정리 (machine-id/cloud-init/호스트키/authorized_keys 초기화)
+sudo cloud-init clean --logs
+sudo rm -f /etc/machine-id && sudo touch /etc/machine-id
+sudo rm -rf /var/lib/cloud/instances/*
+sudo rm -f /etc/ssh/ssh_host_* /home/rocky/.ssh/authorized_keys
+sudo poweroff
+
+# 4. 새 리비전 아이템으로 클론 (VM에서 직접 - 템플릿 변환 안 함)
+govc library.clone -ovf -vm <user>-<name> os-content-library rocky-10.2-<날짜>-r2
+
+# 5. config.yaml library_item 교체 → 빌드 VM 삭제(delete-vm) → 신규 VM으로 검증
+```
+
+⚠️ **커널 핀 준수**: 플랫폼 번들이 커널 버전을 핀한다(현재 Rocky = `6.12.0-211.16.1.el10_2.0.1`).
+`dnf update`로 커널을 올리지 말 것. 모듈은 반드시 `<pkg>-<정확한 커널버전>`으로 설치한다.
+빌드 VM 배포~클론은 커널을 바꾸지 않으므로 핀이 유지된다(검증 완료).
+
+⚠️ **RHEL은 이 표준을 그대로 못 쓴다**: 배포된 RHEL VM은 미등록(repo 0)이라 dnf 설치 불가.
+RHEL 리비전은 빌드 VM에서 임시 subscription 등록 후 동일 패키지를 설치하고 등록 해제해야 한다
+(open-vm-tools 주입과 같은 제약). 향후 내부 미러 도입 시 해소.
 
 ## OS별 이미지 소스
 

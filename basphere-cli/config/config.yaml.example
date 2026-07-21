@@ -30,7 +30,7 @@ templates:
       guest_id: "ubuntu64Guest"
       firmware: "bios"
     rocky-10.2:
-      library_item: "rocky-10.2-20260525"
+      library_item: "rocky-10.2-20260525-r2"
       default_user: "rocky"
       description: "Rocky Linux 10.2"
       interface: "ens33"
