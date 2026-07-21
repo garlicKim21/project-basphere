@@ -362,6 +362,9 @@ resource "vsphere_virtual_machine" "vm" {
   # 클라우드 이미지 OVA는 낮은 hw 버전(예: vmx-10)으로 제작됨 → 배포 시 상향
   hardware_version = var.hardware_version
 
+  # disk.EnableUUID=TRUE: VMDK UUID를 게스트에 노출 → udev가 /dev/disk/by-id, wwn-* 심링크 생성
+  enable_disk_uuid = true
+
   scsi_type = "pvscsi"
 
   network_interface {
