@@ -37,22 +37,63 @@ usage() {
 VM 생성
 
 사용법: create-vm [옵션]
+        옵션 없이 실행하면 대화형 모드로 하나씩 물어봅니다.
 
 옵션:
-  -n, --name <name>     VM 이름 (대화형 입력 가능)
-  -o, --os <os>         OS 종류 (ubuntu-24.04, rocky-10)
-  -s, --spec <spec>     스펙 (small, medium, large)
-  -c, --count <count>   생성할 VM 수 (기본값: 1)
-  --disk <GB[:auto|raw]>  추가 디스크 (반복 가능, 기본 auto=포맷+마운트)
-  --nic <network>       추가 네트워크 연결 (반복 가능, IP 미설정)
-  --password <pw>       사용자 계정 SSH 비밀번호 (생략 시 키 전용). 설정 시 비번+키 모두 로그인
-  -h, --help            도움말
+  -n, --name <name>       VM 이름 (영문 소문자/숫자/하이픈, 1~30자)
+  -o, --os <os>           OS 종류 (아래 '사용 가능한 OS' 참조)
+  -s, --spec <spec>       스펙 (아래 '사용 가능한 스펙' 참조)
+  -c, --count <count>     생성할 VM 수 (기본값: 1, 여러 대는 이름에 -1,-2… 접미사)
+  --disk <GB[:MODE]>      추가 디스크. 반복 지정 가능. MODE는 auto(기본) 또는 raw
+                            auto = ext4 포맷 후 /data1,/data2… 자동 마운트
+                            raw  = 빈 디스크로 연결만 (/dev/sdb…), 직접 구성
+  --nic <network>         추가 네트워크 연결. 반복 지정 가능 (IP는 게스트에서 직접 설정)
+  --password <pw>         사용자 계정 SSH 비밀번호 (생략 시 키 전용)
+                            설정 시 해당 계정만 비번+키 모두 로그인 가능
+  -h, --help              도움말
+EOF
+
+    # config에서 실제 사용 가능한 값 동적 표시 (읽기 실패 시 조용히 생략)
+    local os_lines spec_lines net_lines os_key spec_key net_key
+    os_lines=""
+    while IFS= read -r os_key; do
+        [[ -n "$os_key" ]] && os_lines+="  $(printf '%-14s' "$os_key") $(get_os_description "$os_key")"$'\n'
+    done < <(get_os_list 2>/dev/null)
+    if [[ -n "$os_lines" ]]; then
+        echo ""
+        echo "사용 가능한 OS (-o 값):"
+        printf '%s' "$os_lines"
+    fi
+
+    spec_lines=""
+    for spec_key in $(get_vm_specs 2>/dev/null); do
+        spec_lines+="  $(printf '%-8s' "$spec_key") $(get_spec_details "$spec_key")"$'\n'
+    done
+    if [[ -n "$spec_lines" ]]; then
+        echo ""
+        echo "사용 가능한 스펙 (-s 값):"
+        printf '%s' "$spec_lines"
+    fi
+
+    net_lines=""
+    while IFS= read -r net_key; do
+        [[ -n "$net_key" ]] && net_lines+="  $(printf '%-16s' "$net_key") $(get_network_catalog_description "$net_key")"$'\n'
+    done < <(get_network_catalog 2>/dev/null)
+    if [[ -n "$net_lines" ]]; then
+        echo ""
+        echo "사용 가능한 추가 네트워크 (--nic 값):"
+        printf '%s' "$net_lines"
+    fi
+
+    cat << 'EOF'
 
 예시:
-  create-vm                                    # 대화형 모드
-  create-vm -n my-server -o ubuntu-24.04 -s medium   # 명령행 모드
-  create-vm -n web -o rocky-10 -s small -c 3         # 3대 생성
-  create-vm -n db -o ubuntu-24.04 -s large --disk 200 --disk 50:raw --nic 98-air-gapped
+  create-vm                                              # 대화형 모드
+  create-vm -n web -o ubuntu-24.04 -s medium             # 기본 생성
+  create-vm -n db -o rocky-10.2 -s large -c 3            # Rocky 3대
+  create-vm -n app -o ubuntu-24.04 -s medium \
+            --disk 200:raw --disk 500:raw \
+            --nic 98-air-gapped --password mypass         # 고급 옵션 조합
 EOF
     exit 0
 }
