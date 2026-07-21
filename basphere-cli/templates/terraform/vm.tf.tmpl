@@ -166,6 +166,12 @@ variable "ssh_public_key" {
   default     = "${SSH_PUBLIC_KEY}"
 }
 
+variable "user_password_hash" {
+  description = "Optional password hash for the tenant user (empty = key-only SSH)"
+  type        = string
+  default     = "${USER_PASSWORD_HASH}"
+}
+
 variable "owner" {
   description = "VM owner (basphere user)"
   type        = string
@@ -274,12 +280,25 @@ locals {
     } if d.mode == "auto"
   ]
 
+  # 고급 옵션: 사용자 계정 비번 (공란=키 전용)
+  user_pw_set = var.user_password_hash != ""
+
+  # 비번이 설정된 경우에만 runcmd로 처리 (cloud-init 모듈의 HCL 타입 강제변환 회피):
+  #  1) chpasswd -e로 사용자 계정에 해시 설정 (계정 잠금 해제 포함)
+  #  2) 해당 계정만 비번 SSH 허용 (Match 블록은 sshd_config 맨 끝에 추가 → 뒤 설정 영향 없음)
+  #  전역 ssh_pwauth는 false 유지 → bsadmin 등 다른 계정은 콘솔 전용 그대로.
+  pw_runcmd = local.user_pw_set ? [
+    "echo '${USER}:${var.user_password_hash}' | chpasswd -e",
+    "printf '\\nMatch User ${USER}\\n    PasswordAuthentication yes\\n' >> /etc/ssh/sshd_config",
+    "systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true",
+  ] : []
+
   # cloud-init userdata
   # hostname은 짧은 이름 사용
   userdata_base = {
     hostname         = var.vm_name
     manage_etc_hosts = true
-    # SSH는 전 계정 키 전용 (이미지 기본값에 의존하지 않고 명시적으로 비번 SSH 차단)
+    # SSH는 전역 키 전용 유지. 비번이 설정된 사용자 계정만 pw_runcmd의 Match 블록으로 예외 허용.
     ssh_pwauth = false
     users = [
       {
@@ -289,7 +308,7 @@ locals {
         ssh_authorized_keys = [var.ssh_public_key]
       },
       # 콘솔 전용 관리자 계정: vSphere 웹 콘솔에서 비번 로그인용
-      # SSH 키 없음(SSH 불가) + VM별 랜덤 비번(해시). ssh_pwauth=false라 SSH로는 접근 불가.
+      # SSH 키 없음(SSH 불가) + VM별 랜덤 비번(해시). 전역 ssh_pwauth=false라 SSH 접근 불가.
       {
         name           = "${ADMIN_USER}"
         sudo           = "ALL=(ALL) NOPASSWD:ALL"
@@ -305,11 +324,11 @@ locals {
       devices                  = ["/"]
       ignore_growroot_disabled = false
     }
-    runcmd = [
+    runcmd = concat([
       "echo \"Basphere VM ${var.vsphere_vm_name} (${var.vm_name}) initialized\" > /var/log/basphere-init.log",
       "echo \"Owner: ${var.owner}\" >> /var/log/basphere-init.log",
       "echo \"IP: ${var.ip_address}\" >> /var/log/basphere-init.log",
-    ]
+    ], local.pw_runcmd)
     final_message = "Basphere VM is ready after $UPTIME seconds"
   }
 

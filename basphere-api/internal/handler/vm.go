@@ -89,11 +89,12 @@ func (h *Handler) apiCreateVM(w http.ResponseWriter, r *http.Request) {
 		}
 
 		vmInput := &model.CreateVMInput{
-			Name:          vmName,
-			OS:            input.OS,
-			Spec:          input.Spec,
-			ExtraDisks:    input.ExtraDisks,
-			ExtraNetworks: input.ExtraNetworks,
+			Name:             vmName,
+			OS:               input.OS,
+			Spec:             input.Spec,
+			ExtraDisks:       input.ExtraDisks,
+			ExtraNetworks:    input.ExtraNetworks,
+			UserPasswordHash: input.UserPasswordHash,
 		}
 
 		vm, err := h.provisioner.CreateVM(username, vmInput)

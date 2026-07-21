@@ -244,6 +244,28 @@ func TestCreateVMInput_Validate(t *testing.T) {
 			},
 			[]string{"invalid network name"},
 		},
+		{
+			"valid user password hash",
+			CreateVMInput{
+				Name:             "webserver",
+				OS:               "ubuntu-24.04",
+				Spec:             "small",
+				Count:            1,
+				UserPasswordHash: "$6$abcd1234efgh5678$BwoNaT.S28o1oDVA72uqEVbP4q68h6l8pVMrFYevErF4",
+			},
+			nil,
+		},
+		{
+			"invalid user password hash (shell metachar)",
+			CreateVMInput{
+				Name:             "webserver",
+				OS:               "ubuntu-24.04",
+				Spec:             "small",
+				Count:            1,
+				UserPasswordHash: "$6$x$abc; rm -rf /",
+			},
+			[]string{"must be a crypt-format hash"},
+		},
 	}
 
 	for _, tt := range tests {

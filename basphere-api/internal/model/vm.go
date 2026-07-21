@@ -20,17 +20,18 @@ type ExtraDisk struct {
 
 // VM represents a virtual machine
 type VM struct {
-	Name          string      `json:"name"`
-	VsphereVMName string      `json:"vsphere_vm_name"`
-	Owner         string      `json:"owner"`
-	OS            string      `json:"os"`
-	LoginUser     string      `json:"login_user"`
-	Spec          string      `json:"spec"`
-	IPAddress     string      `json:"ip_address"`
-	ExtraDisks    []ExtraDisk `json:"extra_disks,omitempty"`
-	ExtraNetworks []string    `json:"extra_networks,omitempty"`
-	Status        VMStatus    `json:"status"`
-	CreatedAt     time.Time   `json:"created_at"`
+	Name             string      `json:"name"`
+	VsphereVMName    string      `json:"vsphere_vm_name"`
+	Owner            string      `json:"owner"`
+	OS               string      `json:"os"`
+	LoginUser        string      `json:"login_user"`
+	Spec             string      `json:"spec"`
+	IPAddress        string      `json:"ip_address"`
+	ExtraDisks       []ExtraDisk `json:"extra_disks,omitempty"`
+	ExtraNetworks    []string    `json:"extra_networks,omitempty"`
+	UserPasswordAuth bool        `json:"user_password_auth,omitempty"`
+	Status           VMStatus    `json:"status"`
+	CreatedAt        time.Time   `json:"created_at"`
 }
 
 // CreateVMInput represents the input for creating a VM
@@ -41,6 +42,9 @@ type CreateVMInput struct {
 	Count         int         `json:"count,omitempty"`
 	ExtraDisks    []ExtraDisk `json:"extra_disks,omitempty"`
 	ExtraNetworks []string    `json:"extra_networks,omitempty"`
+	// UserPasswordHash, when set, enables password+key SSH for the tenant user.
+	// Pre-hashed on the CLI (crypt SHA-512); plaintext never reaches the API.
+	UserPasswordHash string `json:"user_password_hash,omitempty"`
 }
 
 // Validate validates the VM creation input
@@ -86,7 +90,30 @@ func (v *CreateVMInput) Validate() []string {
 		}
 	}
 
+	// 비번 해시는 crypt 형식($id$salt$hash)이어야 함 - 평문/주입 방지
+	if v.UserPasswordHash != "" && !isValidCryptHash(v.UserPasswordHash) {
+		errors = append(errors, "user_password_hash: must be a crypt-format hash")
+	}
+
 	return errors
+}
+
+// isValidCryptHash checks the string is a crypt(3) hash like $6$salt$hash with
+// no shell/whitespace metacharacters (it is passed to a script as an argument).
+func isValidCryptHash(s string) bool {
+	if len(s) < 12 || len(s) > 200 || s[0] != '$' {
+		return false
+	}
+	for _, c := range s {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			continue
+		}
+		if c == '$' || c == '.' || c == '/' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isValidNetworkName checks if a network catalog name is safe to pass through

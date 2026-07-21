@@ -45,6 +45,7 @@ VM 생성
   -c, --count <count>   생성할 VM 수 (기본값: 1)
   --disk <GB[:auto|raw]>  추가 디스크 (반복 가능, 기본 auto=포맷+마운트)
   --nic <network>       추가 네트워크 연결 (반복 가능, IP 미설정)
+  --password <pw>       사용자 계정 SSH 비밀번호 (생략 시 키 전용). 설정 시 비번+키 모두 로그인
   -h, --help            도움말
 
 예시:
@@ -181,6 +182,8 @@ CONSOLE_ADMIN_USER="bsadmin"
 CONSOLE_PW_DIR="$BASPHERE_DATA_DIR/console-passwords"
 # 렌더링 시점에 채워지는 해시 (create_single_vm_api_mode에서 설정)
 ADMIN_PASSWORD_HASH=""
+# 사용자 계정 비번 해시 (고급 옵션, 공란=키 전용). --api 모드에서 --password-hash로 주입됨
+USER_PASSWORD_HASH=""
 
 # 추가 네트워크 카탈로그 키 목록
 get_network_catalog() {
@@ -398,7 +401,16 @@ generate_terraform_file() {
         -e "s|\${EXTRA_NETWORKS}|$extra_networks_hcl|g" \
         -e "s|\${ADMIN_USER}|$CONSOLE_ADMIN_USER|g" \
         -e "s|\${ADMIN_PASSWORD_HASH}|$ADMIN_PASSWORD_HASH|g" \
+        -e "s|\${USER_PASSWORD_HASH}|$USER_PASSWORD_HASH|g" \
         "$template_file" > "$output_dir/main.tf"
+}
+
+# 평문 비번 → SHA-512 해시 (실패 시 빈 문자열)
+hash_password() {
+    local plain="$1"
+    local salt
+    salt=$(tr -dc 'A-Za-z0-9./' < /dev/urandom | head -c 16)
+    openssl passwd -6 -salt "$salt" "$plain" 2>/dev/null
 }
 
 # 콘솔 관리자 비번 생성 → 해시는 ADMIN_PASSWORD_HASH 전역에 설정, 평문은 root 전용 파일에 저장
@@ -502,6 +514,7 @@ create_single_vm_api_mode() {
     "ip_address": "$ip_address",
     "extra_disks": $extra_disks_json,
     "extra_networks": $extra_networks_json,
+    "user_password_auth": $([ -n "$USER_PASSWORD_HASH" ] && echo true || echo false),
     "created_at": "$created_at",
     "status": "creating"
 }
@@ -578,7 +591,7 @@ create_vm_via_api() {
         extra_networks_json=$(printf '%s\n' "${EXTRA_NICS[@]}" | jq -R '.' | jq -s -c '.')
     fi
 
-    # JSON 데이터 생성
+    # JSON 데이터 생성 (비번은 해시로만 전달, 평문 없음)
     local json_data
     json_data=$(jq -n \
         --arg name "$vm_name" \
@@ -587,8 +600,10 @@ create_vm_via_api() {
         --argjson count "$count" \
         --argjson extra_disks "$extra_disks_json" \
         --argjson extra_networks "$extra_networks_json" \
+        --arg user_password_hash "$USER_PASSWORD_HASH" \
         '{name: $name, os: $os, spec: $spec, count: $count,
-          extra_disks: $extra_disks, extra_networks: $extra_networks}')
+          extra_disks: $extra_disks, extra_networks: $extra_networks,
+          user_password_hash: $user_password_hash}')
 
     log_info "VM 생성 요청 중..."
 
@@ -654,6 +669,7 @@ main() {
     local target_user=""
     local extra_disk_args=()
     local extra_nic_args=()
+    local user_password_plain=""
 
     # 인자 파싱
     while [[ $# -gt 0 ]]; do
@@ -680,6 +696,14 @@ main() {
                 ;;
             --nic)
                 extra_nic_args+=("$2")
+                shift 2
+                ;;
+            --password)
+                user_password_plain="$2"
+                shift 2
+                ;;
+            --password-hash)
+                USER_PASSWORD_HASH="$2"
                 shift 2
                 ;;
             --api)
@@ -867,6 +891,31 @@ main() {
                     EXTRA_NICS+=("${catalog[$((nic_sel - 1))]}")
                 fi
             fi
+
+            # 사용자 계정 SSH 비밀번호 (공란 = 키 전용, 기본값)
+            if [[ -z "$user_password_plain" ]]; then
+                echo ""
+                echo "[SSH 비밀번호] (공란=키 전용 유지 / 입력 시 비번+키 모두 로그인 가능)"
+                local pw1 pw2
+                read -rs -p "  비밀번호 (공란 가능): " pw1; echo ""
+                if [[ -n "$pw1" ]]; then
+                    read -rs -p "  비밀번호 확인: " pw2; echo ""
+                    if [[ "$pw1" != "$pw2" ]]; then
+                        log_error "비밀번호가 일치하지 않습니다"
+                        exit 1
+                    fi
+                    user_password_plain="$pw1"
+                fi
+            fi
+        fi
+    fi
+
+    # 사용자 비번 해시화 (평문은 API로 보내지 않음)
+    if [[ -n "$user_password_plain" ]]; then
+        USER_PASSWORD_HASH=$(hash_password "$user_password_plain")
+        if [[ -z "$USER_PASSWORD_HASH" ]]; then
+            log_error "비밀번호 해시 생성에 실패했습니다"
+            exit 1
         fi
     fi
 
@@ -897,6 +946,9 @@ main() {
     fi
     if (( ${#EXTRA_NICS[@]} > 0 )); then
         echo "  + 추가 네트워크: ${EXTRA_NICS[*]} (IP 미설정)"
+    fi
+    if [[ -n "$USER_PASSWORD_HASH" ]]; then
+        echo "  + SSH 비밀번호: 설정됨 (사용자 계정 비번+키 로그인 허용)"
     fi
     echo ""
 

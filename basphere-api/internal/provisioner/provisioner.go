@@ -199,6 +199,9 @@ func (p *BashProvisioner) CreateVM(username string, input *model.CreateVMInput) 
 	for _, n := range input.ExtraNetworks {
 		args = append(args, "--nic", n)
 	}
+	if input.UserPasswordHash != "" {
+		args = append(args, "--password-hash", input.UserPasswordHash)
+	}
 	cmd := exec.Command(p.createVMScript, args...)
 
 	// Set environment to ensure proper execution
