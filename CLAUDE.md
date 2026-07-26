@@ -67,10 +67,18 @@ project-basphere/
 - API 기반 아키텍처
 - 보안 (SSH 키 인증, fail2ban)
 
-### Stage 2 - 🚧 예정
+### Stage 2 - 🚧 진행 중 (코드 구현 완료 / 실환경 미가동)
 
-- Kubernetes 클러스터 프로비저닝 (Cluster API)
-- 테넌트 네트워크 격리
+- Kubernetes 클러스터 프로비저닝 (Cluster API + CAPV)
+  - ✅ CLI: `create-cluster`, `list-clusters`, `delete-cluster`, `watch-cluster`, `get-kubeconfig` (설치·sudoers 등록 완료)
+  - ✅ API: `/api/v1/clusters` 계열 7개 엔드포인트, `model.Cluster`
+  - ✅ CAPI 템플릿: `templates/capi/cluster.yaml.tmpl` (kubeadm + Calico v3.27.0, K8s v1.28.0)
+  - ✅ 관리자: `setup-management-cluster` (kind + CAPI v1.6.0/CAPV 자동 설치)
+  - ❌ Management Cluster 미구축 — Bastion에 Docker/kind/kubectl/clusterctl 없음, 생성된 클러스터 0개
+  - ⚠️ `specs.yaml` 키 불일치: 코드는 `.cluster_types` / `.cluster_node_specs` 조회, 파일은 `cluster_specs:` → 전부 기본값 폴백
+- 테넌트 네트워크 격리 - 미착수
+
+> 상세 현황: [docs/design/roadmap.md](docs/design/roadmap.md#stage-2-kubernetes-클러스터-프로비저닝)
 
 ### Stage 3 (IDP) - 📋 계획
 

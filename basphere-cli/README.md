@@ -47,7 +47,10 @@ IDP(포털) 구축 전 단계에서 개발자가 Bastion 서버에 SSH 접속하
 | MVP | VM 생성/조회/삭제 (Terraform) | ✅ 완료 |
 | MVP | 다중 OS 지원 (Ubuntu, Rocky Linux) | ✅ 완료 |
 | MVP | 디스크 자동 확장 | ✅ 완료 |
-| Stage 2 | Kubernetes 클러스터 생성 (Cluster API) | 🚧 예정 |
+| Stage 2 | Kubernetes 클러스터 생성 (Cluster API) | 🚧 구현 완료 / 미가동<sup>*</sup> |
+
+<sup>*</sup> `create-cluster` 등 CLI는 설치되어 있으나 Management Cluster(kind)가 없어 실행 시 실패합니다.
+상세 현황은 [docs/design/roadmap.md](../docs/design/roadmap.md)를 참조하세요.
 
 ### 지원 OS
 

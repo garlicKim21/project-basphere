@@ -12,9 +12,9 @@
 │  ├── 웹 기반 사용자 등록                                                      │
 │  └── 관리자 CLI                                                              │
 │                                                                             │
-│  Stage 2 (예정)                                                              │
-│  ├── Kubernetes 클러스터 프로비저닝 (Cluster API)                             │
-│  └── 테넌트 네트워크 격리                                                     │
+│  Stage 2 🚧 진행 중 (코드 구현 완료 / Management Cluster 미구축)              │
+│  ├── Kubernetes 클러스터 프로비저닝 (Cluster API) — CLI/API 구현 완료          │
+│  └── 테넌트 네트워크 격리 — 미착수                                            │
 │                                                                             │
 │  Stage 3 (IDP)                                                               │
 │  ├── Backstage 기반 포털                                                     │
@@ -91,38 +91,62 @@
 
 ## Stage 2: Kubernetes 클러스터 프로비저닝
 
-**상태**: 🚧 예정
+**상태**: 🚧 진행 중 — 코드 구현 완료 / 실환경 미가동
+
+CLI·API·CAPI 템플릿은 모두 구현되어 Bastion에 설치까지 되어 있으나,
+Management Cluster(kind)가 구축되지 않아 실제 클러스터 생성은 아직 불가능합니다.
 
 ### 목표
 
-- [ ] Kubernetes 클러스터 셀프서비스 생성
+- [x] Kubernetes 클러스터 셀프서비스 생성 — CLI/API 구현 완료 (실행 환경 미구축)
+- [ ] Management Cluster 구축 및 end-to-end 검증
 - [ ] 테넌트 네트워크 격리
 
-### 계획된 기능
+### 구현 현황
 
-#### CLI 명령어
+| 영역 | 구현물 | 상태 |
+|------|--------|------|
+| 사용자 CLI | `create-cluster`, `list-clusters`, `delete-cluster`, `watch-cluster`, `get-kubeconfig` | ✅ 구현·설치 완료 |
+| 공통 라이브러리 | `lib/cluster-common.sh` (타입/할당량/메타데이터/kubeconfig 추출) | ✅ |
+| 관리자 CLI | `setup-management-cluster` (Docker·kind·kubectl·clusterctl 설치, CAPI/CAPV init) | ✅ 구현 완료 / ❌ 미실행 |
+| API 서버 | `POST/GET /api/v1/clusters`, `/clusters/{name}`, `/quota`, `/status`, `/kubeconfig` (7개 엔드포인트) | ✅ |
+| 데이터 모델 | `model.Cluster`, 상태 5종 (pending/provisioning/ready/deleting/failed) | ✅ |
+| CAPI 템플릿 | `templates/capi/cluster.yaml.tmpl` (Cluster, VSphereCluster, KubeadmControlPlane, MachineDeployment, InClusterIPPool) | ✅ |
+| 권한/저장소 | sudoers 등록, `/var/lib/basphere/clusters/<user>/` 사용자별 디렉토리 | ✅ |
+| Management Cluster | kind 기반 CAPI/CAPV 실행 환경 | ❌ 미구축 |
 
-```bash
-create-cluster -n my-cluster -t development
-list-clusters
-delete-cluster my-cluster
-```
-
-#### 클러스터 타입
+### 클러스터 타입
 
 | 타입 | Control Plane | Worker | 용도 |
 |------|--------------|--------|------|
-| development | 1대 | 3대 | 개발/테스트 |
-| production | 3대 | 3대 | 운영 환경 |
+| dev | 1대 (small) | 2대 (small) | 개발/테스트 |
+| standard | 3대 (medium) | 3대 (large) | HA 운영 환경 |
 
-#### 기술 스택
+Worker 스펙은 `create-cluster -w {small\|medium\|large}`로 재정의 가능합니다.
 
-| 구성 요소 | 기술 |
-|----------|------|
-| 프로비저닝 | Cluster API (CAPV) |
-| K8s 이미지 | Talos Linux / Ubuntu |
-| CNI | Cilium |
-| CSI | VMware CSI, Synology NFS |
+### 기술 스택 (구현 기준)
+
+| 구성 요소 | 계획 | 실제 구현 |
+|----------|------|----------|
+| 프로비저닝 | Cluster API (CAPV) | Cluster API v1.6.0 + CAPV ✅ |
+| Management Cluster | kind | kind (`setup-management-cluster`) ✅ |
+| 노드 이미지 | Talos Linux / Ubuntu | Ubuntu + kubeadm (`ubuntu-2204-kube-v1.28.0`) |
+| Kubernetes 버전 | - | v1.28.0 (템플릿에 고정) |
+| CNI | Cilium | **Calico v3.27.0** (kubeadm postCommand 설치) |
+| IPAM | - | CAPI InClusterIPPool + Basphere IPAM 연동 |
+| CSI | VMware CSI, Synology NFS | ❌ 미구현 |
+
+### 남은 작업
+
+1. **Management Cluster 구축** — Bastion에 Docker/kind/kubectl/clusterctl 미설치 상태.
+   `sudo setup-management-cluster` 실행 및 vSphere 인증 연동 필요
+2. **specs.yaml 키 정합성 수정** — 코드는 `.cluster_types.*` / `.cluster_node_specs.*`를 조회하는데
+   `specs.yaml`은 `cluster_specs:`로 정의되어 있어 전부 기본값으로 폴백.
+   결과적으로 `standard` 선택이 `dev`와 동일하게 동작하고 대화형 타입 선택은 실패
+3. **K8s 노드 이미지 준비** — `config.yaml`에 `templates.kubernetes` 항목이 없어 기본값 사용.
+   kubeadm 사전 설치된 OVA를 컨텐츠 라이브러리에 등록 필요
+4. **end-to-end 검증** — 현재 생성된 클러스터 0개
+5. CSI(스토리지), CNI 선택지(Cilium), 테넌트 네트워크 격리
 
 ### 아키텍처
 

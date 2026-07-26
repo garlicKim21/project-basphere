@@ -10,6 +10,46 @@ Stage 2에서는 Cluster API (CAPI)와 CAPV (Cluster API Provider vSphere)를 �
 - 네트워크: 현재 10.254.0.0/21 공간 유지
 - 테넌트 격리: Stage 2 범위 아님 (이후 단계)
 
+## 구현 현황 (2026-07-26 기준)
+
+Phase 2~6(코드 레벨)은 구현되어 Bastion에 설치까지 완료되었고, Phase 1(실행 환경)만 남아 있습니다.
+즉 **코드는 준비되었으나 Management Cluster가 없어 아직 클러스터를 만들 수 없는 상태**입니다.
+
+| Phase | 내용 | 상태 | 비고 |
+|-------|------|------|------|
+| Phase 1 | Management Cluster 구축 | ❌ 미실행 | `setup-management-cluster` 스크립트는 완성. Bastion에 Docker/kind/kubectl/clusterctl 미설치 |
+| Phase 2 | CAPI Manifest 템플릿 | ✅ 완료 | `templates/capi/cluster.yaml.tmpl` (267줄) |
+| Phase 3 | CLI 구현 | ✅ 완료 | 사용자 명령 5종 + `lib/cluster-common.sh` |
+| Phase 4 | API 서버 확장 | ✅ 완료 | `handler/cluster.go`, `model/cluster.go`, 엔드포인트 7개 |
+| Phase 5 | 설정 파일 확장 | ⚠️ 부분 | `management_cluster`, `quotas.max_clusters`, `cluster_specs` 추가됨. 단 키 이름이 코드와 불일치 (아래 참조) |
+| Phase 6 | 데이터 저장 구조 | ✅ 완료 | `/var/lib/basphere/clusters/<user>/` 생성, 현재 저장된 클러스터 0개 |
+
+### 계획 대비 실제 구현 차이
+
+| 항목 | 계획 | 실제 |
+|------|------|------|
+| 클러스터 타입 | development / production | `dev` (1CP/2W) / `standard` (3CP/3W) |
+| CNI | Cilium | Calico v3.27.0 (KubeadmControlPlane postCommand로 설치) |
+| 노드 이미지 | Talos Linux / Ubuntu | Ubuntu + kubeadm (`ubuntu-2204-kube-v1.28.0` 기본값) |
+| K8s 버전 | 미정 | v1.28.0 (`create-cluster`에 하드코딩) |
+| CSI | VMware CSI, Synology NFS | 미구현 |
+| IPAM | - | CAPI `InClusterIPPool` + Basphere `allocate-ip` 연동 |
+
+### 착수 전 해결 필요 — specs.yaml 키 불일치
+
+`lib/cluster-common.sh`와 `create-cluster`가 조회하는 경로와 `specs.yaml`의 실제 구조가 다릅니다.
+
+| 코드가 조회하는 경로 | specs.yaml 실제 구조 |
+|---------------------|---------------------|
+| `.cluster_types.<type>.control_plane_count` | `.cluster_specs.<type>.control_plane.count` |
+| `.cluster_types.<type>.worker_count` | `.cluster_specs.<type>.worker.count` |
+| `.cluster_types.<type>.control_plane_spec` | `.cluster_specs.<type>.control_plane.spec` |
+| `.cluster_node_specs.<spec>.cpu/memory_mb/disk_gb` | 정의 없음 (`vm_specs`만 존재) |
+
+**영향**: 모든 조회가 기본값으로 폴백하여 타입과 무관하게 CP 1대 / Worker 2대, 노드 스펙 2 vCPU·4GB·50GB로 고정됩니다.
+또한 `get_cluster_types()`가 빈 값을 반환하므로 `create-cluster` 대화형 모드는 "클러스터 타입이 정의되지 않았습니다"로 실패합니다.
+코드를 `cluster_specs` 구조에 맞추거나 `specs.yaml`을 `cluster_types`/`cluster_node_specs`로 바꾸는 정리가 선행되어야 합니다.
+
 ## 아키텍처
 
 ```

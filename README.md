@@ -18,9 +18,9 @@ Basphere는 VMware vSphere 기반의 셀프서비스 인프라 플랫폼입니�
 │  ├── 웹 기반 사용자 등록                                                      │
 │  └── 관리자 CLI                                                              │
 │                                                                             │
-│  Stage 2 (예정)                                                              │
-│  ├── Kubernetes 클러스터 프로비저닝 (Cluster API)                             │
-│  └── 테넌트 네트워크 격리                                                     │
+│  Stage 2 🚧 진행 중 (코드 구현 완료 / Management Cluster 미구축)              │
+│  ├── Kubernetes 클러스터 프로비저닝 (Cluster API) — CLI/API 구현 완료          │
+│  └── 테넌트 네트워크 격리 — 미착수                                            │
 │                                                                             │
 │  Stage 3 (IDP)                                                               │
 │  ├── Backstage 기반 포털                                                     │
