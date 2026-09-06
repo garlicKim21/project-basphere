@@ -79,6 +79,9 @@ delete_single_vm_api_mode() {
     local destroy_success=true
 
     if [[ -f "$tf_dir/main.tf" ]]; then
+        # set -e 하에서는 서브쉘이 0이 아닌 값으로 끝나면 그 즉시 스크립트가 종료되므로,
+        # 종료코드를 `|| rc=$?`로 받아야 destroy_success 처리에 도달한다.
+        local rc=0
         (
             cd "$tf_dir"
 
@@ -93,9 +96,9 @@ delete_single_vm_api_mode() {
             if ! terraform destroy -auto-approve -no-color > terraform-destroy.log 2>&1; then
                 exit 1
             fi
-        )
+        ) || rc=$?
 
-        if [[ $? -ne 0 ]]; then
+        if [[ $rc -ne 0 ]]; then
             destroy_success=false
         fi
     fi

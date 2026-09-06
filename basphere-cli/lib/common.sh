@@ -10,6 +10,15 @@ readonly BASPHERE_VSPHERE_ENV="/etc/basphere/vsphere.env"
 readonly BASPHERE_DATA_DIR="/var/lib/basphere"
 readonly BASPHERE_LOG_DIR="/var/log/basphere"
 readonly BASPHERE_LIB_DIR="/usr/local/lib/basphere"
+readonly BASPHERE_TF_PLUGIN_CACHE="/var/cache/basphere/terraform-plugins"
+
+# Terraform 프로바이더 캐시
+# 캐시가 없으면 terraform init이 작업 디렉터리마다 vSphere 프로바이더를 새로 받는다
+# (사용자 디렉터리당 약 65MB의 디스크 + 동일량의 registry 다운로드).
+# 디렉터리가 없거나 쓸 수 없으면 terraform이 경고를 내므로 조건부로만 설정한다.
+if [[ -d "$BASPHERE_TF_PLUGIN_CACHE" && -w "$BASPHERE_TF_PLUGIN_CACHE" ]]; then
+    export TF_PLUGIN_CACHE_DIR="$BASPHERE_TF_PLUGIN_CACHE"
+fi
 
 # 색상 정의
 readonly RED='\033[0;31m'

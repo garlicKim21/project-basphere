@@ -141,6 +141,9 @@ create_vsphere_user_folder() {
     fi
 
     # Terraform 실행 (서브쉘 내에서 환경변수 로드)
+    # set -e 하에서는 서브쉘이 0이 아닌 값으로 끝나면 그 즉시 스크립트가 종료되므로,
+    # 종료코드를 `|| rc=$?`로 받아야 아래 에러 처리에 도달한다.
+    local rc=0
     (
         cd "$folder_dir"
 
@@ -160,9 +163,9 @@ create_vsphere_user_folder() {
             log_warn "Terraform apply 실패 (로그: $folder_dir/terraform-apply.log)"
             exit 1
         fi
-    )
+    ) || rc=$?
 
-    if [[ $? -ne 0 ]]; then
+    if [[ $rc -ne 0 ]]; then
         log_warn "vSphere 폴더 생성 실패. 첫 번째 VM 생성 시 수동으로 만들어야 합니다."
         log_warn "로그 확인: $folder_dir/terraform-apply.log"
         return 1
@@ -185,6 +188,9 @@ delete_vsphere_user_folder() {
     log_info "vSphere 사용자 폴더 삭제 중..."
 
     # Terraform destroy (서브쉘 내에서 환경변수 로드)
+    # set -e 하에서는 서브쉘이 0이 아닌 값으로 끝나면 그 즉시 스크립트가 종료되므로,
+    # 종료코드를 `|| rc=$?`로 받아야 아래 에러 처리에 도달한다.
+    local rc=0
     (
         cd "$folder_dir"
 
@@ -199,10 +205,12 @@ delete_vsphere_user_folder() {
             log_warn "vSphere 폴더 삭제 실패 (로그: $folder_dir/terraform-destroy.log)"
             exit 1
         fi
-    )
+    ) || rc=$?
 
-    if [[ $? -ne 0 ]]; then
-        log_warn "vSphere 폴더 삭제 실패"
+    if [[ $rc -ne 0 ]]; then
+        log_warn "vSphere 폴더 삭제 실패 — 폴더는 수동 정리가 필요할 수 있습니다: $folder_dir"
+        log_warn "vCenter에서 이미 삭제된 폴더라면 state 정리 후 재시도:"
+        log_warn "  cd $folder_dir && sudo terraform state rm vsphere_folder.user_folder"
         return 1
     fi
 
@@ -536,7 +544,9 @@ user_delete() {
     log_info "사용자 삭제 중: $username"
 
     # 1. vSphere 사용자 폴더 삭제
-    delete_vsphere_user_folder "$username"
+    # 폴더 삭제가 실패해도(예: vCenter에서 이미 삭제되어 state drift) 나머지 정리는 계속한다.
+    # set -e 하에서 `|| true`가 없으면 여기서 스크립트 전체가 종료된다.
+    delete_vsphere_user_folder "$username" || true
 
     # 2. Basphere 데이터 삭제
     rm -rf "$BASPHERE_DATA_DIR/users/$username"
@@ -650,7 +660,9 @@ user_purge() {
     fi
 
     # 2. vSphere 사용자 폴더 삭제
-    delete_vsphere_user_folder "$username"
+    # 폴더 삭제가 실패해도(예: vCenter에서 이미 삭제되어 state drift) 나머지 정리는 계속한다.
+    # set -e 하에서 `|| true`가 없으면 여기서 스크립트 전체가 종료된다.
+    delete_vsphere_user_folder "$username" || true
 
     # 3. IP 블록 해제 (allocations.tsv에서 제거)
     local ipam_file="$BASPHERE_DATA_DIR/ipam/allocations.tsv"

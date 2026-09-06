@@ -183,6 +183,10 @@ create_directories() {
     # 설정 디렉토리
     mkdir -p /etc/basphere
 
+    # Terraform 프로바이더 캐시
+    # (소유권/권한은 basphere 계정 생성 이후인 set_permissions에서 설정한다)
+    mkdir -p /var/cache/basphere/terraform-plugins
+
     log_success "디렉토리 생성 완료"
 }
 
@@ -389,6 +393,14 @@ set_permissions() {
     chmod 755 /var/lib/basphere/terraform
     # 사용자별 디렉토리는 사용자 소유 유지, 권한만 설정
     find /var/lib/basphere/terraform -mindepth 1 -maxdepth 1 -type d -exec chmod 777 {} \; 2>/dev/null || true
+
+    # Terraform 프로바이더 캐시
+    # 사용자 CLI는 basphere로, basphere-admin은 root로 terraform을 실행하므로 양쪽 다 써야 한다.
+    # setgid(2775)로 root가 만든 파일도 basphere 그룹을 상속해 그룹 쓰기가 유지된다.
+    if [[ -d /var/cache/basphere ]]; then
+        chown -R basphere:basphere /var/cache/basphere
+        chmod 2775 /var/cache/basphere /var/cache/basphere/terraform-plugins
+    fi
 
     # IPAM 디렉토리 (사용자가 락 획득 및 파일 쓰기 가능해야 함)
     chmod 777 /var/lib/basphere/ipam
