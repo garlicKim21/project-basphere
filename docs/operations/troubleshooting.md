@@ -276,6 +276,44 @@ sudo /usr/local/lib/basphere/internal/allocate-block <username>
 
 ---
 
+## 문제 15: 디스크 풀로 SSH 접속 실패 (백업 누적)
+
+**증상**: SSH 원격 접속 실패, `df -h /`가 100%, `/var/backups/basphere`가 수십 GB
+
+**원인** (2026-08 장애):
+1. 백업 아카이브 1개가 4.8GB — `/var/lib/basphere/images`(OS 이미지 빌드 산출물)가 전체의 99% 이상 차지
+2. 14일 보존 × 4.8GB = 67GB로, 58GB 루트 파티션에 원천적으로 들어갈 수 없음
+3. 디스크가 차자 `tar`가 `gzip: stdout: No space left on device`로 exit 2 종료
+4. `set -euo pipefail` + 보존기간 삭제 로직이 `tar` **뒤에** 있어, 실패 시 정리에 도달하지 못함
+   → 다음 날도 같은 이유로 실패하는 자기강화 루프
+
+**해결** (2026-09-06 적용, `deploy/backup/basphere-backup.sh`):
+- 보존기간 삭제를 `tar` **앞으로** 이동 — tar 성공 여부와 무관하게 항상 공간 회수
+- `images`/`.terraform` 제외 → 아카이브 4.8GB에서 약 270KB로 축소
+- `tar` 실패 시 `log_error` 호출 + 불완전 아카이브 삭제 + exit 1 (systemd에 failed로 노출)
+- `tar` exit 1(비치명적 경고)과 exit 2 이상(치명적)을 구분
+- `umask 077` — tar와 chmod 사이에 죽어도 아카이브가 world-readable로 남지 않음
+- 백업 전 최소 여유 공간(1GB) 확인
+
+```bash
+# 상태 확인
+df -h /
+sudo du -xh --max-depth=1 /var/backups/basphere
+sudo journalctl -u basphere-backup.service --no-pager | tail -50
+systemctl list-timers basphere-backup.timer
+
+# 수동 실행 (타이머와 동일 경로)
+sudo systemctl start basphere-backup.service
+```
+
+**장기 개선 검토 대상**:
+- 백업 아카이브가 `vsphere.env`(vSphere 자격증명)와 SSH 키를 **평문**으로 담고 있음 → 저장 시 암호화 검토
+- `basphere-api`가 root로 동작 → 전용 계정 + 최소 권한으로 분리 검토
+- 백업이 루트 파티션에만 존재 → 원격/별도 볼륨 복제 검토
+- 백업 실패 시 알림 경로 없음 → `OnFailure=` 유닛으로 알림 추가 검토
+
+---
+
 ## 로그 확인
 
 ```bash
